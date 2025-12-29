@@ -1,0 +1,409 @@
+:root {
+    /* [기존 색상 변수] */
+    --bg: #0d1117; --card: #161b22; --input: #010409;
+    --primary: #a855f7; --primary-glow: rgba(168, 85, 247, 0.4);
+    --accent: #39d353; --accent-glow: rgba(57, 211, 83, 0.3);
+    --text: #c9d1d9; --text-dim: #8b949e;
+    --border: #30363d; --error: #f85149;
+    --s0: #21262d; --s1: #0e4429; --s2: #006d32; --s3: #26a641; --s4: #39d353;
+    --nav-h: 80px;
+
+    /* [GitHub Theme & Grid Variables] */
+    --gh-bg: #0d1117;          /* 스트릭 배경 */
+    --gh-empty: #161b22;       /* 빈 칸 */
+    --gh-l1: #0e4429;          /* 1단계 */
+    --gh-l2: #006d32;          /* 2단계 */
+    --gh-l3: #26a641;          /* 3단계 */
+    --gh-l4: #39d353;          /* 4단계 (가장 밝음) */
+
+    /* 동적 크기 제어를 위한 기본값 (JS에서 덮어씌움) */
+    --cell-size: 11px;
+    --cell-gap: 4px;
+}
+
+* { box-sizing: border-box; font-family: 'Pretendard', sans-serif; margin: 0; padding: 0; outline: none; -webkit-tap-highlight-color: transparent; }
+body { background-color: var(--bg); color: var(--text); overflow-x: hidden; }
+
+/* Custom Scrollbar */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #484f58; }
+
+/* Animations */
+.page { animation: fadeIn 0.4s cubic-bezier(0.4, 0, 0.2, 1); display: none; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+/* Navigation */
+.sidebar { width: 260px; background: var(--card); border-right: 1px solid var(--border); position: fixed; height: 100vh; padding: 32px 16px; display: flex; flex-direction: column; z-index: 1000; }
+.nav-btn { padding: 14px 18px; border-radius: 12px; color: var(--text-dim); cursor: pointer; display: flex; align-items: center; gap: 12px; font-weight: 600; transition: all 0.2s; background: transparent; border: 1px solid transparent; }
+.nav-btn:hover { background: rgba(255,255,255,0.05); color: var(--text); }
+.nav-btn.active { background: #21262d; color: var(--primary); border-color: var(--border); box-shadow: 0 4px 15px rgba(0,0,0,0.2); }
+.mobile-nav { display: none; position: fixed; bottom: 0; left: 0; width: 100%; height: var(--nav-h); background: rgba(22, 27, 34, 0.95); backdrop-filter: blur(15px); border-top: 1px solid var(--border); z-index: 2000; padding-bottom: env(safe-area-inset-bottom); }
+
+/* Layout */
+.main { margin-left: 260px; min-height: 100vh; padding: 40px 20px; display: flex; justify-content: center; position: relative; }
+.container { width: 100%; max-width: 520px; display: flex; flex-direction: column; gap: 32px; }
+
+/* Settings Overlay */
+#settingsOverlay { position: fixed; z-index: 1500; background: var(--card); border: 1px solid var(--border); transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1); padding: 30px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); visibility: hidden; }
+#settingsOverlay.open { transform: translate(0, 0) !important; visibility: visible; }
+.setting-row { display:flex; justify-content:space-between; align-items:center; margin-bottom: 25px; }
+.setting-val { display:flex; align-items:center; gap:15px; background:var(--input); padding:8px 20px; border-radius:14px; border:1px solid var(--border); }
+.setting-btn { background:none; border:none; color:var(--text); font-size:1.5rem; cursor:pointer; padding:0 5px; }
+
+@media (min-width: 1025px) {
+    #settingsOverlay { top: 0; left: 260px; right: 0; height: auto; border-top: none; border-radius: 0 0 24px 24px; transform: translateY(-100%); }
+}
+@media (max-width: 1024px) {
+    .sidebar { display: none !important; }
+    .mobile-nav { display: flex !important; justify-content: space-around; align-items: center; }
+    .mobile-nav .nav-btn { flex: 1; flex-direction: column; font-size: 0.85rem; gap: 6px; padding: 10px 0; border: none; background: none; height: 100%; justify-content: center; }
+    .nav-btn .icon { font-size: 1.4rem; margin-bottom: 2px; }
+    .main { margin-left: 0; padding-bottom: 140px; padding-top: 20px; }
+    #settingsOverlay { bottom: var(--nav-h); left: 0; width: 100%; border-bottom: none; border-radius: 24px 24px 0 0; transform: translateY(100%); border-left: none; border-right: none; }
+}
+
+/* [배너 전체 컨테이너] */
+#resumeBanner {
+    display: none; /* JS에서 flex로 변경됨 */
+    justify-content: space-between; /* 좌측 텍스트, 우측 버튼 배분 */
+    align-items: center;
+
+    background: linear-gradient(135deg, #a855f7, #7c3aed); /* 보라색 그라데이션 */
+    padding: 20px 25px;
+    border-radius: 20px;
+    margin-bottom: 24px;
+    box-shadow: 0 10px 20px rgba(124, 58, 237, 0.3);
+
+    color: white; /* 텍스트 흰색 */
+    transition: transform 0.2s;
+}
+
+#resumeBanner:hover {
+    transform: translateY(-2px);
+}
+
+/* [배너 내부 텍스트 영역] */
+.resume-info h3 {
+    margin: 0 0 5px 0;
+    font-size: 1.1rem;
+    font-weight: 800;
+}
+.resume-info p {
+    margin: 0;
+    font-size: 0.9rem;
+    opacity: 0.9;
+}
+
+/* [배너 내부 버튼 영역] */
+.resume-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.btn-resume-go {
+    background: white;
+    color: #7c3aed; /* 배너 배경색과 대비되는 색 */
+    border: none;
+    padding: 8px 16px;
+    border-radius: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    transition: background 0.2s;
+}
+.btn-resume-go:hover { background: #f0f0f0; }
+
+.btn-resume-cancel {
+    background: rgba(255, 255, 255, 0.2); /* 반투명 흰색 */
+    color: white;
+    border: 1px solid rgba(255,255,255,0.4);
+    padding: 8px 12px;
+    border-radius: 12px;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+.btn-resume-cancel:hover { background: rgba(255, 255, 255, 0.3); }
+
+
+.big-card {
+    padding: 40px 30px;
+    min-height: 250px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 24px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+    width: 100%;
+    margin-bottom: 24px;
+}
+.big-card:hover { transform: translateY(-5px); border-color: var(--primary); box-shadow: 0 10px 30px rgba(0,0,0,0.2); }
+.big-card .count { font-size: 4rem; font-weight: 900; color: var(--primary); line-height: 1; margin-bottom: 12px; }
+.big-card.review { border-color: rgba(57, 211, 83, 0.2); }
+.big-card.review:hover { border-color: var(--accent); }
+.big-card.review .count { color: var(--accent); }
+
+
+/* ---------------------------------------------------- */
+/* [GitHub Style Streak] - 애니메이션 & 3/6/1년 적용 */
+/* ---------------------------------------------------- */
+
+/* 1. 전체 래퍼 */
+.streak-wrap {
+    background: var(--gh-bg);
+    padding: 20px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    width: 100%;
+    color: #fff;
+    display: flex;
+    flex-direction: column;
+    /* 높이 변화가 있을 때 부드럽게 */
+    transition: all 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+/* 2. 기간 선택 버튼 (3M/6M/1Y) */
+.period-selector {
+    display: flex;
+    gap: 5px;
+    background: rgba(255,255,255,0.05);
+    padding: 3px;
+    border-radius: 6px;
+    justify-content: flex-end;
+}
+.period-selector button {
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    font-size: 0.75rem;
+    padding: 4px 8px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: 0.2s;
+}
+.period-selector button:hover {
+    color: #fff;
+    background: rgba(255,255,255,0.1);
+}
+.period-selector button.active {
+    background: var(--primary);
+    color: #000;
+    font-weight: bold;
+}
+
+/* 3. 컨테이너: 왼쪽 라벨 + 오른쪽 그리드 */
+.gh-container {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+}
+
+/* 4. 왼쪽 요일 라벨 */
+.gh-labels {
+    display: flex;
+    flex-direction: column;
+    /* 높이 자동 계산: (셀크기 + 갭) * 7 - 마지막갭 */
+    height: calc((var(--cell-size) + var(--cell-gap)) * 7 - var(--cell-gap));
+    justify-content: space-between;
+    padding-top: 1px;
+
+    /* 높이 변경 시 애니메이션 */
+    transition: height 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+}
+.gh-labels span {
+    font-size: 0.7rem;
+    color: #8b949e;
+    line-height: var(--cell-size);
+    height: var(--cell-size);
+
+    /* 폰트/크기 변경 시 애니메이션 */
+    transition: all 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+/* 5. 중간 스크롤 뷰 (오른쪽 정렬) */
+.streak-scroll-view {
+    flex: 1;
+    direction: rtl; /* 내용물 오른쪽부터 */
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    scroll-behavior: smooth; /* 스크롤 부드럽게 */
+}
+.streak-scroll-view::-webkit-scrollbar { display: none; }
+
+/* 6. 그리드 본체 */
+.streak-grid {
+    display: inline-grid;
+    direction: ltr; /* 내부는 다시 왼쪽->오른쪽 */
+    /* 7줄 고정, 높이는 변수 사용 */
+    grid-template-rows: repeat(7, var(--cell-size));
+    grid-auto-flow: column;
+    gap: var(--cell-gap);
+
+    /* 그리드 간격/행 크기 변경 시 애니메이션 */
+    transition: gap 0.4s, grid-template-rows 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+/* 7. 칸 디자인 */
+.day {
+    width: var(--cell-size);
+    height: var(--cell-size);
+    border-radius: 2px;
+    background-color: var(--gh-empty);
+    border: none;
+    cursor: pointer;
+    box-sizing: border-box;
+
+    /* 1. 크기/색상 변경 애니메이션 */
+    transition: width 0.4s, height 0.4s, background-color 0.2s, border 0.2s;
+
+    /* 2. 생성 시 팝업 애니메이션 */
+    animation: dayAppear 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) backwards;
+}
+
+/* 칸 등장 애니메이션 키프레임 */
+@keyframes dayAppear {
+    from { opacity: 0; transform: scale(0.5); }
+    to { opacity: 1; transform: scale(1); }
+}
+
+/* 칸 Hover: GitHub 스타일 (테두리 + 살짝 확대) */
+.day:hover {
+    border: 1px solid rgba(255,255,255,0.5);
+    z-index: 10;
+    transform: scale(1.15); /* 살짝 커지는 효과 */
+    transition: transform 0.1s; /* 호버는 즉각 반응 */
+}
+
+/* 8. 툴팁 (마우스 따라다니기) */
+#streakTooltip {
+    position: fixed;
+    background: rgba(0,0,0,0.85);
+    color: #fff;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    pointer-events: none; /* ★ 핵심: 마우스 감지 방해 안 함 */
+    opacity: 0;
+    transition: opacity 0.1s;
+    z-index: 9999;
+    border: 1px solid var(--border);
+    backdrop-filter: blur(4px);
+    font-weight: 500;
+    white-space: nowrap;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+}
+
+/* ---------------------------------------------------- */
+/* [기타 Modals & Learning View] - 기존 유지 */
+/* ---------------------------------------------------- */
+
+/* Modals & Alerts */
+.modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); backdrop-filter: blur(5px); z-index: 4000; display: none; align-items: center; justify-content: center; animation: fadeIn 0.2s; }
+.modal-box { background: var(--card); padding: 30px; border-radius: 24px; width: 90%; max-width: 400px; border: 1px solid var(--border); max-height: 70vh; display: flex; flex-direction: column; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
+.word-list-scroll { overflow-y: auto; margin-top: 15px; flex: 1; padding-right: 5px; }
+
+/* Custom Alert */
+#customAlert { position: fixed; top: 20px; left: 50%; transform: translateX(-50%) translateY(-100px); background: var(--card); border: 1px solid var(--primary); padding: 20px 30px; border-radius: 16px; z-index: 5000; display: flex; align-items: center; gap: 15px; box-shadow: 0 10px 40px rgba(0,0,0,0.4); transition: 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); opacity: 0; pointer-events: none; }
+#customAlert.show { transform: translateX(-50%) translateY(0); opacity: 1; pointer-events: auto; }
+
+/* Learning View */
+.learn-view { background: var(--card); border-radius: 32px; padding: 50px 25px; text-align: center; position: relative; min-height: 540px; display: flex; flex-direction: column; justify-content: center; border: 1px solid var(--border); box-shadow: 0 20px 40px rgba(0,0,0,0.2); overflow: hidden; }
+#pBarWrap { position: absolute; top: 0; left: 0; width: 100%; height: 6px; background: var(--s0); z-index: 10; }
+.word-text { font-size: clamp(2.2rem, 8vw, 3.8rem); font-weight: 900; color: #fff; line-height: 1.1; word-break: break-all; margin-bottom: 10px; }
+.input-box { background: var(--input); border: 2px solid var(--border); border-radius: 16px; padding: 20px; color: white; font-size: 1.2rem; width: 100%; text-align: center; transition: 0.3s; margin-bottom: 12px; }
+.input-box:focus { border-color: var(--primary); box-shadow: 0 0 0 4px rgba(168, 85, 247, 0.1); }
+.input-box.correct { border-color: var(--accent); background: rgba(57, 211, 83, 0.05); }
+.input-box.wrong { border-color: var(--error); background: rgba(248, 81, 73, 0.05); }
+.input-box.processing { border-color: var(--text-dim); background: rgba(255,255,255,0.05); animation: pulse 1.5s infinite; }
+@keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.6; } 100% { opacity: 1; } }
+
+.btn-main { background: var(--primary); color: white; border: none; padding: 20px; border-radius: 16px; font-weight: 800; width: 100%; cursor: pointer; font-size: 1.1rem; transition: 0.2s; display: flex; justify-content: center; align-items: center; gap: 8px; }
+.btn-main:hover { background: #9333ea; transform: translateY(-2px); }
+.btn-sub { background: transparent; border: 1px solid var(--border); color: var(--text-dim); padding: 15px; border-radius: 16px; font-weight: 700; width: 100%; cursor: pointer; font-size: 1rem; margin-top: 10px; transition: 0.2s; }
+.btn-sub:hover { border-color: var(--error); color: var(--error); background: rgba(248, 81, 73, 0.05); }
+
+.pc-hint { font-size: 0.8rem; opacity: 0.7; font-weight: 400; background: rgba(255,255,255,0.2); padding: 2px 6px; border-radius: 4px; }
+@media (max-width: 1024px) { .pc-hint { display: none; } }
+
+/* Manage List */
+.set-header { padding: 18px; cursor: pointer; font-weight: 700; display: flex; justify-content: space-between; align-items: center; background: var(--s0); border-radius: 12px; transition: 0.2s; }
+.set-header:hover { background: #2c333e; }
+.word-item { margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; background: rgba(255,255,255,0.03); padding: 12px 16px; border-radius: 10px; gap: 10px; }
+.delete-btn { color: var(--text-dim); padding: 6px 12px; border-radius: 8px; font-size: 0.8rem; border: 1px solid var(--border); background: var(--bg); cursor: pointer; white-space: nowrap; }
+.delete-btn:hover { color: var(--error); border-color: var(--error); }
+#page-manage .learn-view { align-items: stretch; text-align: left; }
+#page-manage .input-box { text-align: left; }
+
+/* [모달 배경] */
+.modal-overlay {
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0, 0, 0, 0.6); /* 배경 어둡게 */
+    backdrop-filter: blur(3px); /* 배경 흐림 효과 */
+    z-index: 9999;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+/* [모달 박스] */
+.confirm-box {
+    background: #1e1e24; /* 앱 테마색 */
+    padding: 25px;
+    border-radius: 20px;
+    width: 85%;
+    max-width: 320px;
+    border: 1px solid var(--accent);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    text-align: center;
+    animation: popIn 0.2s ease-out;
+}
+
+.confirm-box p {
+    color: var(--text);
+    font-size: 1rem;
+    line-height: 1.5;
+    margin-bottom: 25px;
+    white-space: pre-line; /* 줄바꿈(\n) 적용 */
+}
+
+/* [버튼 그룹] */
+.confirm-btns {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+}
+
+.confirm-btns button {
+    flex: 1;
+    padding: 12px 0;
+    border: none;
+    border-radius: 12px;
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.btn-cancel {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-dim);
+}
+
+.btn-ok {
+    background: var(--accent);
+    color: #000;
+}
+
+/* [애니메이션] */
+@keyframes popIn {
+    from { transform: scale(0.9); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+}
