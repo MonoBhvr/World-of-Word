@@ -7,11 +7,99 @@
 
     <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-database-compat.js"></script>
 
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css">
 
     <link rel="stylesheet" href="style.css">
+
+    <style>
+        /* 대시보드 그리드 레이아웃 */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        @media (max-width: 480px) {
+            .stats-grid { grid-template-columns: 1fr; } /* 모바일은 1열 */
+        }
+
+        /* 카드 공통 스타일 */
+        .stat-card {
+            background: #25252d;
+            border-radius: 20px;
+            padding: 20px;
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            border: 1px solid var(--border);
+            min-height: 140px;
+        }
+
+        .stat-card .label { font-size: 0.85rem; color: var(--text-dim); font-weight: 600; }
+        .stat-card .value { font-size: 1.8rem; font-weight: 800; margin-top: 5px; color: var(--text); }
+        .stat-card .suffix { font-size: 1rem; color: var(--text-dim); font-weight: 500; }
+
+        /* 아이콘 배경 */
+        .icon-bg {
+            position: absolute; top: -10px; right: -10px;
+            font-size: 5rem; opacity: 0.05; pointer-events: none;
+        }
+
+        /* 진행바 */
+        .mini-progress-bg {
+            width: 100%; height: 6px; background: rgba(255,255,255,0.1);
+            border-radius: 3px; margin-top: 15px; overflow: hidden;
+        }
+        .mini-progress-fill {
+            height: 100%; background: var(--primary);
+            border-radius: 3px; transition: width 0.5s ease;
+        }
+
+        /* 카드 내부 버튼 */
+        .btn-mini-start {
+            margin-top: auto; /* 하단 고정 */
+            background: rgba(255, 215, 0, 0.15); color: var(--accent);
+            border: none; padding: 10px; border-radius: 10px;
+            font-size: 0.9rem; font-weight: 700; cursor: pointer;
+            width: 100%; text-align: center;
+            transition: background 0.2s;
+        }
+        .btn-mini-start:hover { background: var(--accent); color: #000; }
+
+        .today-card .btn-mini-start { background: rgba(112, 224, 0, 0.15); color: var(--primary); }
+        .today-card .btn-mini-start:hover { background: var(--primary); color: #000; }
+
+        /* 오늘의 어원 카드 */
+        .etymology-card {
+            background: linear-gradient(135deg, #2c3e50, #34495e);
+            border-radius: 20px; padding: 25px; margin-bottom: 25px;
+            color: white; position: relative;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .ety-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        .ety-badge { background: rgba(255,255,255,0.2); padding: 4px 10px; border-radius: 12px; font-size: 0.8rem; font-weight: 700; }
+        .refresh-icon { background: none; border: none; color: rgba(255,255,255,0.5); font-size: 1.2rem; cursor: pointer; }
+        .ety-content h3 { font-size: 1.8rem; font-weight: 900; margin-bottom: 10px; color: var(--accent); font-family: serif; }
+        .ety-content p { font-size: 0.95rem; line-height: 1.6; color: #e0e0e0; word-break: keep-all; }
+
+        /* 스트릭 헤더 정리 */
+        .streak-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; width: 100%; }
+        .streak-btns { display: flex; gap: 5px; }
+        .streak-btns button {
+            background: var(--bg); border: 1px solid var(--border);
+            color: var(--text-dim); padding: 4px 10px; border-radius: 15px;
+            font-size: 0.8rem; cursor: pointer;
+        }
+        .streak-btns button.active {
+            background: var(--primary); color: #000; border-color: var(--primary); font-weight: 700;
+        }
+    </style>
 </head>
 <body>
 
@@ -30,10 +118,15 @@
     </div>
 </div>
 
-<section id="page-auth" class="page" style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh;">
-    <h1 style="font-size: 4.5rem; font-weight: 900; color: var(--primary); margin-bottom: 15px; text-shadow: 0 0 30px var(--primary-glow);">WoW</h1>
-    <button onclick="login()" class="btn-main" style="max-width: 320px;">Google 계정으로 시작</button>
-</section>
+<div id="customConfirmModal" class="modal-overlay" style="display: none;">
+    <div class="confirm-box">
+        <p id="confirmMsg">내용이 들어갑니다</p>
+        <div class="confirm-btns">
+            <button id="confirmNo" class="btn-cancel">취소</button>
+            <button id="confirmYes" class="btn-ok">확인</button>
+        </div>
+    </div>
+</div>
 
 <div id="settingsOverlay">
     <div style="max-width: 500px; margin: 0 auto;">
@@ -64,43 +157,49 @@
         </div>
         <div class="setting-row">
             <div>
-                <div style="font-weight: 700; font-size: 1.1rem; margin-bottom: 5px;">하루 학습량</div>
+                <div style="font-weight: 700; font-size: 1.1rem; margin-bottom: 5px;">하루 학습 목표</div>
                 <div style="font-size: 0.85rem; color: var(--text-dim);">한 번에 학습할 단어 수</div>
             </div>
 
             <div class="setting-val" style="gap: 5px; padding: 8px 10px;">
+                <button onclick="adjSetting('dailyGoal', -10)" class="setting-btn" style="font-size: 0.75rem; padding: 0 6px;">-10</button>
+                <button onclick="adjSetting('dailyGoal', -1)" class="setting-btn" style="font-size: 1.2rem;">-</button>
+                <span id="dailyGoalVal" style="min-width:40px; text-align:center; font-weight:800; font-size:1.3rem; font-variant-numeric: tabular-nums;">20</span>
+                <button onclick="adjSetting('dailyGoal', 1)" class="setting-btn" style="font-size: 1.2rem;">+</button>
+                <button onclick="adjSetting('dailyGoal', 10)" class="setting-btn" style="font-size: 0.75rem; padding: 0 6px;">+10</button>
+            </div>
+        </div>
+        <div class="setting-row">
+            <label>Gemini API 키</label>
+            <div class="setting-val api-key-wrapper">
+                <input type="password" id="settingsApiKey" placeholder="API 키 입력" />
 
-                <button onclick="adjSetting('dailyGoal', -10)" class="setting-btn"
-                        style="font-size: 0.75rem; color: var(--text-dim); padding: 0 6px;">
-                    -10
+                <button type="button" class="toggle-visibility" onclick="toggleApiKey()" title="비밀번호 보기">
+                    <svg class="eye open" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                        <path d="M12 5c-7 0-11 7-11 7s4 7 11 7 11-7 11-7-4-7-11-7zm0 12a5 5 0 1 1 0-10 5 5 0 0 1 0 10z"/>
+                        <circle cx="12" cy="12" r="2.5"/>
+                    </svg>
+                    <svg class="eye closed" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="currentColor" style="display:none;">
+                        <path d="M17.94 17.94l-14-14m0 0L17.94 17.94M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/>
+                    </svg>
                 </button>
 
-                <button onclick="adjSetting('dailyGoal', -1)" class="setting-btn"
-                        style="font-size: 1.4rem; padding: 0 10px; margin-right: 5px;">
-                    -
+                <button type="button" class="save-btn" id="saveApiKeyBtn" title="저장">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                        <path d="M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-4-4zM5 5h11v4H5V5zm0 14v-9h14v9H5z"/>
+                    </svg>
                 </button>
-
-                <span id="dailyGoalVal"
-                      style="min-width:40px; text-align:center; font-weight:800; font-size:1.3rem; font-variant-numeric: tabular-nums;">
-            20
-        </span>
-
-                <button onclick="adjSetting('dailyGoal', 1)" class="setting-btn"
-                        style="font-size: 1.4rem; padding: 0 10px; margin-left: 5px;">
-                    +
-                </button>
-
-                <button onclick="adjSetting('dailyGoal', 10)" class="setting-btn"
-                        style="font-size: 0.75rem; color: var(--text-dim); padding: 0 6px;">
-                    +10
-                </button>
-
             </div>
         </div>
 
         <button class="btn-main" onclick="toggleSettings()">닫기</button>
     </div>
 </div>
+
+<section id="page-auth" class="page" style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh;">
+    <h1 style="font-size: 4.5rem; font-weight: 900; color: var(--primary); margin-bottom: 15px; text-shadow: 0 0 30px var(--primary-glow);">WoW</h1>
+    <button onclick="login()" class="btn-main" style="max-width: 320px;">Google 계정으로 시작</button>
+</section>
 
 <nav class="sidebar" id="sidebar">
     <div style="font-size: 2rem; font-weight: 900; color: var(--primary); margin-bottom: 50px; padding-left: 10px; letter-spacing: -1px;">WoW</div>
@@ -119,36 +218,74 @@
 
 <main class="main" id="mainArea" style="display:none;">
     <div class="container">
+
         <section id="page-home" class="page">
-            <div id="resumeBanner">
-                <div style="font-weight: 800; font-size: 1.1rem;">⚡ 학습 이어하기</div>
-                <div style="font-size: 0.9rem; opacity: 0.9;">중단된 시점부터 다시 시작합니다.</div>
+            <header class="dashboard-header" style="margin-bottom: 25px; display: flex; justify-content: space-between; align-items: flex-end;">
+                <div>
+                    <div style="font-size:0.9rem; color:var(--text-dim);" id="currentDateDisp">Loading...</div>
+                    <h2 style="font-size:1.6rem; margin-top:5px;">
+                        Hello, <span id="userNameDisp" style="color:var(--accent);">User</span>! 👋
+                    </h2>
+                </div>
+            </header>
+
+            <div id="resumeBanner" style="display:none; margin-bottom: 20px;"></div>
+
+            <div id="heroArea" class="hero-card" style="display:none;">
+                <div class="hero-title">오늘의 학습 목표</div>
+                <div class="hero-count" id="heroCount">0</div>
+                <div class="hero-goal">/ <span id="heroGoal">20</span></div>
+                <button class="btn-hero-start" onclick="startDailySession()">학습 시작하기 🚀</button>
             </div>
 
-            <div id="todayTask" class="big-card">
-                <div class="count" id="countToday">0</div>
-                <div style="font-weight:700; color:var(--text-dim);">오늘의 신규 학습</div>
-            </div>
-            <div id="reviewTask" class="big-card review">
-                <div class="count" id="countReview">0</div>
-                <div style="font-weight:700; color:var(--accent);">망각 곡선 복습</div>
-            </div>
-
-            <div class="streak-wrap">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; width: 100%;">
-                    <div style="display:flex; align-items:center; gap:10px;justify-content:space-between;width: 100%">
-                        <div style="font-size:1rem; font-weight:700; color:var(--text);">학습 기록</div>
-
-                        <div class="period-selector">
-                            <div class="period-selector">
-                                <button onclick="changePeriod('3M')" id="btn-3M">3개월</button>
-                                <button onclick="changePeriod('6M')" id="btn-6M">6개월</button>
-                                <button onclick="changePeriod('1Y')" id="btn-1Y">1년</button>
-                            </div>
+            <div class="stats-grid">
+                <div id="todaySmallCard" class="stat-card today-card" style="display:none;">
+                    <div class="icon-bg">🔥</div>
+                    <div class="stat-info">
+                        <span class="label">오늘의 학습</span>
+                        <div class="value">
+                            <span id="countToday">0</span>
+                            <span class="suffix">/ <span id="goalDisp">20</span></span>
                         </div>
+                    </div>
+                    <div class="mini-progress-bg">
+                        <div id="todayProgressBar" class="mini-progress-fill" style="width: 0%"></div>
+                    </div>
+                    <div style="margin-top:15px; font-weight:700; color:var(--primary); font-size:0.9rem; text-align:center;">
+                        🎉 목표 달성 완료!
                     </div>
                 </div>
 
+                <div class="stat-card review-card" id="reviewCardObj">
+                    <div class="icon-bg">🧠</div>
+                    <div class="stat-info">
+                        <span class="label">복습 필요</span>
+                        <div class="value" id="countReview" style="color:var(--accent);">0</div>
+                    </div>
+                    <div style="flex-grow:1;"></div>
+                    <button class="btn-mini-start" onclick="startReviewSession()">복습하기</button>
+                </div>
+            </div>
+
+            <div class="etymology-card">
+                <div class="ety-header">
+                    <span class="ety-badge">🧐 오늘의 어원</span>
+                </div>
+                <div class="ety-content">
+                    <h3 id="etyWord">Loading...</h3>
+                    <p id="etyDesc">오늘의 재미있는 어원을 불러오고 있습니다.</p>
+                </div>
+            </div>
+
+            <div class="streak-wrap" style="margin-top:25px;">
+                <div class="streak-header">
+                    <div style="font-size:1rem; font-weight:700; color:var(--text);">🔥 학습 열기 (Streak)</div>
+                    <div class="streak-btns">
+                        <button onclick="changePeriod('3m')" id="btn-3m">3개월</button>
+                        <button onclick="changePeriod('6m')" id="btn-6m">6개월</button>
+                        <button onclick="changePeriod('1y')" id="btn-1y">1년</button>
+                    </div>
+                </div>
                 <div class="gh-container">
                     <div class="gh-labels">
                         <span></span><span>Mon</span><span></span><span>Wed</span><span></span><span>Fri</span><span></span>
@@ -187,8 +324,19 @@
             <div class="learn-view">
                 <h3 style="margin-bottom:20px; font-size: 1.5rem;">새 단어장 추가</h3>
                 <input type="text" id="setName" class="input-box" placeholder="세트 이름 (예: Day 1)" style="margin-bottom:10px;">
-                <textarea id="rawInput" class="input-box" style="height:160px; resize: none; line-height: 1.6;" placeholder="영어단어[Tab]한글뜻&#10;apple	사과&#10;run	달리다"></textarea>
+                <textarea id="rawInput" class="input-box" style="height:160px; resize: none; line-height: 1.6;" placeholder="영어단어[Tab]한글뜻&#10;apple 사과&#10;run 달리다"></textarea>
                 <button onclick="importWords()" class="btn-main">저장하기</button>
+
+                <div style="margin-top: 30px; border-top: 1px solid var(--border); padding-top: 20px;">
+                    <h3 style="margin-bottom:15px; font-size: 1.5rem;">📥 단어장 다운로드</h3>
+                    <div style="display:flex; gap:10px;">
+                        <input type="text" id="shareCodeInput" class="input-box" placeholder="공유 코드 입력 (예: A1B2C3)" style="text-transform:uppercase;">
+                        <button onclick="downloadSharedBook()" class="btn-main" style="width:100px; background:var(--accent); color:#1e1e24; font-weight:700;">받기</button>
+                    </div>
+                    <p style="margin-top:5px; font-size:0.8rem; color:var(--text-dim);">
+                        * 친구에게 받은 6자리 코드를 입력하세요.
+                    </p>
+                </div>
 
                 <div style="margin-top: 40px; border-top: 1px solid var(--border); padding-top: 20px;">
                     <h4 style="margin-bottom: 15px; color: var(--text-dim);">내 단어장 목록</h4>
@@ -197,18 +345,17 @@
             </div>
         </section>
     </div>
-    <div id="customConfirmModal" class="modal-overlay" style="display: none;">
-        <div class="confirm-box">
-            <p id="confirmMsg">내용이 들어갑니다</p>
-            <div class="confirm-btns">
-                <button id="confirmNo" class="btn-cancel">취소</button>
-                <button id="confirmYes" class="btn-ok">확인</button>
-            </div>
-        </div>
-    </div>
-
 </main>
+<div id="apiKeyPrompt" class="overlay" style="display:none;">
+    <div class="popup">
+        <h2>Gemini API 키</h2>
+        <input type="text" id="popupApiKey" placeholder="Google Ai Studio에서 발급받은 API 키를 입력">
+        <button id="apiKeyBtn" onclick="saveUserApiKey()">확인</button>
+    </div>
+</div>
 
-<script src="app.js" defer></script>
+<script type="module" src="ai.js"></script>
+<script src="learn.js"></script>
+<script src="app.js"></script>
 </body>
 </html>

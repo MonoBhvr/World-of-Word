@@ -1,523 +1,232 @@
 const firebaseConfig = { apiKey: "AIzaSyB4YI3_w6bXIcxXB7gC7Xnzo9biEKVGSqM", authDomain: "ciaword-a7c51.firebaseapp.com", projectId: "ciaword-a7c51", storageBucket: "ciaword-a7c51.firebasestorage.app", messagingSenderId: "566446687672", appId: "1:566446687672:web:ea63701602a00ac28a7b4d" };
-const GEMINI_KEY = "AIzaSyAqyJx7Sg6JWjqAHsKsrVTOJUsD14JlDx0";
+
+window.addEventListener('load', () => {
+    const savedKey = localStorage.getItem('userApiKey');
+    if(savedKey) {
+        window.GEMINI_KEY = savedKey;
+        document.getElementById('apiKeyPrompt').style.display = 'none';
+        if(document.getElementById('settingsApiKey')) {
+            document.getElementById('settingsApiKey').value = savedKey;
+        }
+    } else {
+        document.getElementById('apiKeyPrompt').style.display = 'flex';
+    }
+});
+
+
 
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
-const db = firebase.firestore();
+const db = firebase.database();
+
 
 // ============================================================
-// [Global Variables & Settings]
+// [Global Variables]
 // ============================================================
-let allWords = [], currentSession = [], recalledWords = [], currentIdx = 0, curPhase = 'home';
-let correctionQueue = [];
-let retryQueue = [];
-let correctionIdx = 0;
-let sessionType = 'normal';
-let dailyStatus = { finished: false, date: "" };
+let allWords = [];          // 전체 단어 목록 (DB 로드됨)
+let currentSession = [];    // 현재 학습 중인 단어 목록
+let recalledWords = [];     // 2단계 통과한 단어
+let correctionQueue = [];   // 2단계 실패 -> 3단계 대상
+let retryQueue = [];        // 3단계 재시험 큐
+let currentIdx = 0;         // 1단계 진행 인덱스
+let correctionIdx = 0;      // 3단계 진행 인덱스
+let curPhase = 'home';      // 현재 화면 상태
+let sessionType = 'normal'; // 'daily', 'review', 'normal'
+let dailyStatus = { finished: false };
 let correctionTarget = null;
+let pt = null;              // 타이머 핸들
 
-// ★ 통합된 설정 객체 (CONFIG 제거됨)
+// 사용자 설정 (기본값 + 로컬스토리지 복구)
 let userSettings = JSON.parse(localStorage.getItem('wow_settings')) || {
     previewTime: 2.0,
     reLearnTime: 3.0,
     dailyGoal: 20
 };
 
+
 // ============================================================
-// [Auth & Init]
+// [Auth & Initialization]
 // ============================================================
-auth.onAuthStateChanged(user => {
+auth.onAuthStateChanged((user) => {
     if (user) {
-        document.getElementById('page-auth').style.display='none';
-        document.getElementById('mainArea').style.display='flex';
+        console.log("Logged in:", user.email);
         loadData();
+        showPage('page-home');
     } else {
-        document.getElementById('page-auth').style.display='flex';
-        document.getElementById('mainArea').style.display='none';
+        console.log("Logged out");
+        showPage('page-auth');
     }
 });
 
-// 페이지 로드 시 설정값 UI에 반영
-document.addEventListener('DOMContentLoaded', () => {
-    updateSettingUI();
-    // 스트릭 설정 로드
-    changePeriod(currentPeriod);
-});
-
-function login() {
+window.login = function() {
     const provider = new firebase.auth.GoogleAuthProvider();
     auth.signInWithPopup(provider).catch(e => myAlert("로그인 실패: " + e.message));
-}
-function logout() {
+};
+
+window.logout = function() {
     auth.signOut();
     location.reload();
-}
-function myAlert(msg) {
-    const el = document.getElementById('customAlert');
-    document.getElementById('alertMsg').innerText = msg;
-    el.classList.add('show');
-    setTimeout(() => el.classList.remove('show'), 3000);
-}
+};
 
-// ============================================================
-// [Settings Logic] 설정 관련 함수 통합
-// ============================================================
-function toggleSettings() {
-    document.getElementById('settingsOverlay').classList.toggle('open');
-}
-// [Settings Logic] DB에서 설정 불러오기
-async function loadSettings() {
+async function loadData() {
     if (!auth.currentUser) return;
+    const uid = auth.currentUser.uid;
 
-    const docRef = db.collection('users').doc(auth.currentUser.uid).collection('meta').doc('settings');
-    const doc = await docRef.get();
+    // 1. 전체 데이터 한 번에 로드 (RTDB)
+    const snapshot = await db.ref('users/' + uid).once('value');
+    const data = snapshot.val() || {};
 
-    if (doc.exists) {
-        // DB에 저장된 설정이 있으면 덮어쓰기
-        const data = doc.data();
-        // 기존 키값 유지하면서 병합 (새로운 설정 항목이 생길 경우 대비)
-        userSettings = { ...userSettings, ...data };
-    } else {
-        // DB에 설정 문서가 없으면 기본값으로 생성
-        await docRef.set(userSettings);
-    }
+    // 2. 단어 변환 (Object -> Array)
+    const wordsObj = data.words || {};
+    allWords = Object.keys(wordsObj).map(key => ({
+        id: key,
+        ...wordsObj[key]
+    }));
 
-    // UI에 반영
-    updateSettingsUI();
+    // 3. 설정 및 데일리 상태 로드
+    if (data.settings) userSettings = { ...userSettings, ...data.settings };
+    dailyStatus = data.daily || {};
+
+    // 4. UI 업데이트
+    updateSettingUI();
+    renderDashboard();
+    if(typeof renderAccordion === 'function') renderAccordion();
+    if(typeof checkResume === 'function') checkResume();
+    if(typeof renderStreak === 'function') renderStreak();
+    loadDailyEtymology();
 }
+
+// ============================================================
+// [Settings Logic]
+// ============================================================
+window.toggleSettings = function() {
+    document.getElementById('settingsOverlay').classList.toggle('open');
+};
 
 function updateSettingUI() {
-    // 시간 설정 UI 반영
-    if(document.getElementById('previewTimeVal'))
-        document.getElementById('previewTimeVal').innerText = userSettings.previewTime.toFixed(1) + 's';
-    if(document.getElementById('reLearnTimeVal'))
-        document.getElementById('reLearnTimeVal').innerText = userSettings.reLearnTime.toFixed(1) + 's';
-
-    // 하루 학습량 UI 반영
-    if(document.getElementById('dailyGoalVal'))
-        document.getElementById('dailyGoalVal').innerText = userSettings.dailyGoal;
+    if(document.getElementById('previewTimeVal')) document.getElementById('previewTimeVal').innerText = userSettings.previewTime.toFixed(1) + 's';
+    if(document.getElementById('reLearnTimeVal')) document.getElementById('reLearnTimeVal').innerText = userSettings.reLearnTime.toFixed(1) + 's';
+    if(document.getElementById('dailyGoalVal')) document.getElementById('dailyGoalVal').innerText = userSettings.dailyGoal;
 }
 
-// [Settings Logic] 설정값 변경 및 DB 저장
-async function adjSetting(key, val) {
+window.adjSetting = async function(key, val) {
     let current = userSettings[key];
     let newVal = current + val;
 
-    // --- 값 제한 로직 ---
     if (key === 'previewTime') {
-        if (newVal < 0.5) newVal = 0.5;
-        if (newVal > 5.0) newVal = 5.0;
-    }
-    else if (key === 'reLearnTime') {
-        if (newVal < 1.0) newVal = 0.5;
-        if (newVal > 10.0) newVal = 10.0;
-    }
-    else if (key === 'dailyGoal') {
-        if (newVal < 5) newVal = 5;
-        if (newVal > 100) newVal = 100;
+        if (newVal < 0.5) newVal = 0.5; if (newVal > 5.0) newVal = 5.0;
+    } else if (key === 'reLearnTime') {
+        if (newVal < 1.0) newVal = 1.0; if (newVal > 10.0) newVal = 10.0;
+    } else if (key === 'dailyGoal') {
+        if (newVal < 5) newVal = 5; if (newVal > 100) newVal = 100;
     }
 
-    // 소수점 오차 보정 (부동소수점 문제 방지)
-    if (key !== 'dailyGoal') {
-        newVal = Math.round(newVal * 10) / 10;
-    }
+    if (key !== 'dailyGoal') newVal = Math.round(newVal * 10) / 10;
 
-    // 전역 변수 업데이트
     userSettings[key] = newVal;
+    updateSettingUI();
 
-    // UI 즉시 업데이트
-    updateSettingsUI();
-
-    // ★ DB 비동기 저장 (사용자 경험을 위해 await 없이 백그라운드 저장)
     if (auth.currentUser) {
-        db.collection('users').doc(auth.currentUser.uid).collection('meta').doc('settings')
-            .set(userSettings, { merge: true })
-            .catch(err => console.error("설정 저장 실패:", err));
+        await db.ref(`users/${auth.currentUser.uid}/settings`).set(userSettings);
     }
-}
-
-// ============================================================
-// [Data & Dashboard]
-// ============================================================
-async function loadData() {
-    try {
-        const snap = await db.collection('users').doc(auth.currentUser.uid).collection('words').get();
-        allWords = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-
-        const todayStr = new Date().toDateString();
-        const metaRef = db.collection('users').doc(auth.currentUser.uid).collection('meta').doc('daily');
-        const metaDoc = await metaRef.get();
-
-        if (metaDoc.exists && metaDoc.data().date === todayStr) {
-            dailyStatus = metaDoc.data();
-        } else {
-            dailyStatus = { finished: false, date: todayStr, wordIds: [] };
-        }
-        await loadSettings();
-        renderDashboard();
-        renderStreak();
-        renderAccordion();
-        showPage('home');
-        checkResume();
-    } catch (e) {
-        console.error("Load Error:", e);
-        myAlert("데이터 로딩 중 오류가 발생했습니다.");
-    }
-}
-
-function renderDashboard() {
-    if (typeof allWords === 'undefined') return;
-
-    const now = Date.now();
-
-    // 1. 복습 카운트
-    const reviewCount = allWords.filter(w =>
-        w.lastStudied &&
-        w.nextReview &&
-        w.nextReview <= now
-    ).length;
-    document.getElementById('countReview').innerText = reviewCount;
-
-    // 2. 오늘의 신규 학습
-    const unstudiedWords = allWords.filter(w => !w.lastStudied);
-    const maxDaily = userSettings.dailyGoal || 20; // 설정값 사용
-
-    // 화면 표시용 (남은 것 vs 목표량 중 작은 것)
-    const countToShow = Math.min(unstudiedWords.length, maxDaily);
-    const todayCountEl = document.getElementById('countToday');
-
-    if (dailyStatus.finished) {
-        todayCountEl.innerText = "완료";
-        todayCountEl.style.color = "#00ff88";
-    } else {
-        todayCountEl.innerText = countToShow;
-        todayCountEl.style.color = "var(--text)";
-    }
-
-    // 3. 시작 버튼 이벤트
-    document.getElementById('todayTask').onclick = async () => {
-        if (dailyStatus.finished) {
-            // [완료 상태] 추가 학습
-            if(allWords.length === 0) return myAlert("단어가 없습니다.");
-
-            const pool = allWords.filter(w => !w.lastStudied || w.lastStudied < new Date().setHours(0,0,0,0));
-            const randomList = pool.sort(() => 0.5 - Math.random()).slice(0, maxDaily);
-            startFlow(randomList, 'normal');
-
-        } else {
-            // [학습 전 상태] 정규 학습
-            if (unstudiedWords.length === 0) return myAlert("신규 학습할 단어가 없습니다!");
-
-            // 설정된 개수만큼 잘라서 시작
-            const sessionList = unstudiedWords.slice(0, maxDaily);
-
-            // 일일 학습 기록을 위해 sessionType을 'daily'로 넘길 수도 있음 (여기선 로직상 normal 사용하거나 startDailySession 호출)
-            // 여기서는 심플하게 잘라서 바로 시작
-            startDailySession(sessionList);
-        }
-    };
-
-    // 복습 버튼
-    document.getElementById('reviewTask').onclick = () => {
-        const reviews = allWords.filter(w => w.lastStudied && w.nextReview && w.nextReview <= now);
-        if(reviews.length === 0) return myAlert("복습할 단어가 없습니다.");
-
-        reviews.sort((a,b) => a.nextReview - b.nextReview);
-        // 복습도 너무 많으면 설정값만큼 끊어서 진행
-        startFlow(reviews.slice(0, maxDaily), 'review');
-    };
-}
-
-// 오늘의 단어 세션 시작 (DB 저장/로드 로직 포함)
-async function startDailySession(preSelectedList) {
-    let targetList = [];
-
-    // 이미 목록이 넘어왔으면 그것 사용 (renderDashboard에서 자른 것)
-    if(preSelectedList && preSelectedList.length > 0) {
-        targetList = preSelectedList;
-    }
-    // 아니라면 DB 체크
-    else if (dailyStatus.wordIds && dailyStatus.wordIds.length > 0) {
-        targetList = allWords.filter(w => dailyStatus.wordIds.includes(w.id));
-    }
-
-    if (targetList.length === 0) return myAlert("학습할 단어가 없습니다.");
-
-    // DB에 "이게 오늘의 단어다"라고 저장 (첫 시작일 경우)
-    if (!dailyStatus.wordIds || dailyStatus.wordIds.length === 0) {
-        const newIds = targetList.map(w => w.id);
-        const todayStr = new Date().toDateString();
-        try {
-            await db.collection('users').doc(auth.currentUser.uid).collection('meta').doc('daily').set({
-                date: todayStr,
-                wordIds: newIds,
-                finished: false
-            });
-            dailyStatus = { date: todayStr, wordIds: newIds, finished: false };
-        } catch(e) { console.log("Meta save failed", e); }
-    }
-
-    startFlow(targetList, 'daily');
-}
-
-// ============================================================
-// [UI & Page Control]
-// ============================================================
-function showPage(id) {
-    curPhase = id;
-    document.querySelectorAll('.page').forEach(p => p.style.display = 'none');
-    const targetId = ['preview', 'dump'].includes(id) ? 'learn' : id;
-    document.getElementById('page-' + targetId).style.display = 'block';
-
-    document.querySelectorAll('.nav-btn').forEach(b => {
-        b.classList.remove('active');
-        if(b.classList.contains('nav-'+id)) b.classList.add('active');
-    });
-
-    document.getElementById('pBarWrap').style.display = 'none';
-    clearTimeout(window.pt);
-}
-
-// ============================================================
-// [Streak Logic]
-// ============================================================
-let currentPeriod = localStorage.getItem('saved_streak_period') || '1Y';
-
-const periodConfig = {
-    '3M': { days: 110, size: '22px' },
-    '6M': { days: 180, size: '15px' },
-    '1Y': { days: 365, size: '11px' }
 };
 
-function changePeriod(period) {
-    currentPeriod = period;
-    localStorage.setItem('saved_streak_period', period);
+// ============================================================
+// [Dashboard & Navigation]
+// ============================================================
+function renderDashboard() {
+    const now = Date.now();
+    // 데이터 필터링
+    const reviewList = allWords.filter(w => w.nextReview && w.nextReview <= now);
+    const unstudiedWords = allWords.filter(w => !w.lastStudied);
 
-    const buttons = document.querySelectorAll('.period-selector button');
-    buttons.forEach(btn => btn.classList.remove('active'));
-    const targetBtn = document.getElementById(`btn-${period}`);
-    if(targetBtn) targetBtn.classList.add('active');
-
-    const root = document.documentElement;
-    if(periodConfig[period]) {
-        root.style.setProperty('--cell-size', periodConfig[period].size);
+    // 사용자 이름/날짜 표시
+    if(document.getElementById('currentDateDisp')) {
+        document.getElementById('currentDateDisp').innerText = new Date().toLocaleDateString();
     }
-    renderStreak();
-}
-
-function renderStreak() {
-    const grid = document.getElementById('streakGrid');
-    if(!grid) return;
-    grid.innerHTML = "";
-
-    const history = {};
-    if (typeof allWords !== 'undefined') {
-        allWords.forEach(w => {
-            if(w.lastStudied) {
-                const d = new Date(w.lastStudied);
-                const offset = d.getTimezoneOffset() * 60000;
-                const localDate = new Date(d.getTime() - offset);
-                const key = localDate.toISOString().split('T')[0];
-                history[key] = (history[key] || 0) + 1;
-            }
-        });
+    if(document.getElementById('userNameDisp') && auth.currentUser) {
+        document.getElementById('userNameDisp').innerText = auth.currentUser.email.split('@')[0];
     }
 
-    const config = periodConfig[currentPeriod] || periodConfig['1Y'];
-    const totalDays = config.days;
-    const today = new Date();
-    const startDate = new Date();
-    startDate.setDate(today.getDate() - totalDays);
+    const countToday = dailyStatus.finished ? "완료" : Math.min(unstudiedWords.length, userSettings.dailyGoal);
 
-    const dayOfWeek = startDate.getDay();
-    startDate.setDate(startDate.getDate() - dayOfWeek);
+    // UI 숫자 업데이트
+    if(document.getElementById('heroCount')) document.getElementById('heroCount').innerText = countToday;
+    if(document.getElementById('heroGoal')) document.getElementById('heroGoal').innerText = userSettings.dailyGoal;
+    if(document.getElementById('countToday')) document.getElementById('countToday').innerText = dailyStatus.finished ? userSettings.dailyGoal : 0;
+    if(document.getElementById('goalDisp')) document.getElementById('goalDisp').innerText = userSettings.dailyGoal;
+    if(document.getElementById('countReview')) document.getElementById('countReview').innerText = reviewList.length;
 
-    const loopDate = new Date(startDate);
-    while (loopDate <= today) {
-        const offset = loopDate.getTimezoneOffset() * 60000;
-        const localDate = new Date(loopDate.getTime() - offset);
-        const dateStr = localDate.toISOString().split('T')[0];
-        const count = history[dateStr] || 0;
+    // 학습 완료 여부에 따른 카드 전환
+    const heroArea = document.getElementById('heroArea');
+    const smallCard = document.getElementById('todaySmallCard');
 
-        const el = document.createElement('div');
-        el.className = 'day';
-
-        if(count === 0) el.style.backgroundColor = 'var(--gh-empty)';
-        else if(count <= 3) el.style.backgroundColor = 'var(--gh-l1)';
-        else if(count <= 6) el.style.backgroundColor = 'var(--gh-l2)';
-        else if(count <= 10) el.style.backgroundColor = 'var(--gh-l3)';
-        else el.style.backgroundColor = 'var(--gh-l4)';
-
-        el.onmousemove = (e) => {
-            const tooltip = document.getElementById('streakTooltip');
-            if(tooltip) {
-                tooltip.innerHTML = `<strong>${dateStr}</strong><br>${count} words`;
-                tooltip.style.left = (e.clientX + 15) + 'px';
-                tooltip.style.top = (e.clientY + 15) + 'px';
-                tooltip.style.opacity = '1';
-            }
-        };
-        el.onmouseleave = () => {
-            const tooltip = document.getElementById('streakTooltip');
-            if(tooltip) tooltip.style.opacity = '0';
-        };
-        el.onclick = () => {
-            if (typeof openStreakModal === 'function') openStreakModal(dateStr);
-        };
-        grid.appendChild(el);
-        loopDate.setDate(loopDate.getDate() + 1);
-    }
-    const scrollView = document.querySelector('.streak-scroll-view');
-    if(scrollView) {
-        setTimeout(() => { scrollView.scrollTo({ left: 9999, behavior: 'smooth' }); }, 50);
-        setTimeout(() => { scrollView.scrollLeft = 9999; }, 10);
-    }
-}
-
-function openStreakModal(dateStr) {
-    document.getElementById('wordListModal').style.display = 'flex';
-    document.getElementById('modalDate').innerText = dateStr;
-    const content = document.getElementById('modalListContent');
-    content.innerHTML = '';
-    const list = allWords.filter(w => w.lastStudied && new Date(w.lastStudied).toISOString().startsWith(dateStr));
-
-    if(list.length === 0) {
-        content.innerHTML = '<div style="color:var(--text-dim); text-align:center;">기록 없음</div>';
+    if (dailyStatus.finished) {
+        if(heroArea) heroArea.style.display = 'none';
+        if(smallCard) smallCard.style.display = 'flex';
+        // 진행바 채우기
+        const bar = document.getElementById('todayProgressBar');
+        if(bar) setTimeout(() => bar.style.width = '100%', 100);
     } else {
-        list.forEach(w => {
-            const row = document.createElement('div');
-            row.style.cssText = "display:flex; justify-content:space-between; padding:10px; border-bottom:1px solid rgba(255,255,255,0.05);";
-            row.innerHTML = `<span>${w.word}</span><span style="color:var(--text-dim)">${w.mean}</span>`;
-            content.appendChild(row);
-        });
+        if(heroArea) heroArea.style.display = 'block';
+        if(smallCard) smallCard.style.display = 'none';
     }
 }
-function closeModal(e) { if(e.target === document.getElementById('wordListModal')) document.getElementById('wordListModal').style.display = 'none'; }
 
-// ============================================================
-// [Flow Logic] Phase 1: Preview
-// ============================================================
-function startFlow(list, type = 'normal') {
-    if(!list || list.length === 0) return;
+window.showPage = function(id) {
+    // 1. 네비게이션바 처리
+    const sidebar = document.getElementById('sidebar');
+    const mobileNav = document.getElementById('mobileNav');
 
-    sessionType = type;
-    currentSession = list;
+    // 2. 로그인 페이지 vs 메인 페이지 전환 로직
+    if (id === 'page-auth') {
+        document.getElementById('page-auth').style.display = 'flex';
+        document.getElementById('mainArea').style.display = 'none';
+        if(sidebar) sidebar.style.display = 'none';
+        if(mobileNav) mobileNav.style.display = 'none';
+        return; // 로그인 페이지면 여기서 중단
+    } else {
+        loadData();
+        document.getElementById('page-auth').style.display = 'none';
+        document.getElementById('mainArea').style.display = 'block';
+        if(sidebar) sidebar.style.display = 'flex';
+        const isMobile = window.innerWidth <= 768;
 
-    // Daily가 아닐 경우만 섞음 (Daily는 목록이 고정되어야 함)
-    if(type !== 'daily') currentSession.sort(() => 0.5 - Math.random());
-
-    recalledWords = [];
-    correctionQueue = [];
-    retryQueue = [];
-    currentIdx = 0;
-
-    document.getElementById('resumeBanner').style.display = 'none';
-    localStorage.removeItem('wow_session');
-
-    startPreview();
-}
-
-function startPreview() {
-    showPage('preview');
-    document.getElementById('wordArea').style.display = 'block';
-    document.getElementById('inputArea').style.display = 'none';
-    document.getElementById('giveUpBtn').style.display = 'none';
-    document.getElementById('pBarWrap').style.display = 'block';
-
-    document.getElementById('actionBtn').innerHTML = '다음 <span class="pc-hint">(Space)</span>';
-    document.getElementById('actionBtn').onclick = () => {
-        clearTimeout(window.pt);
-        currentIdx++;
-        nextPreview();
-    };
-
-    document.onkeyup = (e) => {
-        if(curPhase === 'preview' && e.code === 'Space') {
-            document.getElementById('actionBtn').click();
+        if (mobileNav) {
+            mobileNav.style.display = isMobile ? 'flex' : 'none';
         }
-    };
-
-    nextPreview();
-}
-
-function nextPreview() {
-    if(currentIdx >= currentSession.length) {
-        startDump();
-        return;
     }
 
-    document.getElementById('phaseTag').innerText = `1. PREVIEW (${currentIdx + 1} / ${currentSession.length})`;
-    saveSession();
+    // 3. 내부 페이지 전환
+    curPhase = id;
+    document.querySelectorAll('.page').forEach(p => p.style.display = 'none');
 
-    const w = currentSession[currentIdx];
-    document.getElementById('mainWord').innerText = w.word;
-    document.getElementById('mainMean').innerText = w.mean;
-    playTTS(w.word);
+    // id가 home, manage가 아니면 learn 페이지로 간주
+    let targetId = id;
+    if(['preview', 'dump', 'correction_view', 'correction_test'].includes(id)) {
+        targetId = 'page-learn';
+    }
+    else if (!id.startsWith('page-')) {
+        targetId = 'page-' + id;
+    }
 
-    const bar = document.getElementById('pBar');
-    bar.style.transition = 'none'; bar.style.width = '0%';
-    setTimeout(() => {
-        // ★ 설정값 userSettings 사용
-        bar.style.transition = `width ${userSettings.previewTime}s linear`;
-        bar.style.width = '100%';
-    }, 50);
+    const page = document.getElementById(targetId) || document.getElementById('page-' + id);
+    if(page) page.style.display = 'block';
 
-    clearTimeout(window.pt);
-    window.pt = setTimeout(() => {
-        currentIdx++;
-        nextPreview();
-    }, userSettings.previewTime * 1000);
-}
+    // 4. 메뉴 버튼 활성화 표시
+    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+    const activeBtn = document.querySelector(`.nav-${id.replace('page-', '')}`);
+    if(activeBtn) activeBtn.classList.add('active');
 
-function startDump() {
-    // ★ [추가] 2단계 진입 사실을 확실히 저장
-    // 1단계가 끝났으므로 currentIdx는 이미 list.length와 같음.
-    // 이 상태를 저장해둬야 resumeFlow에서 1단계로 돌아가지 않음.
-    saveSession();
+    // 타이머 정리
+    if(id !== 'preview' && id !== 'correction_view') clearTimeout(window.pt);
+};
+// ============================================================
+// [Core Learning Logic] 0. Start Flow
+// ============================================================
 
-    showPage('dump');
-    document.onkeyup = null;
-    window.speechSynthesis.cancel();
-
-    if(!localStorage.getItem('wow_session')) correctionQueue = [];
-
-    document.getElementById('phaseTag').innerText = "2. RECALL (인출)";
-    document.getElementById('wordArea').style.display = 'none';
-    document.getElementById('inputArea').style.display = 'block';
-    document.getElementById('pBarWrap').style.display = 'none';
-
-    resetInputUI();
-}
-
-function resetInputUI() {
-    document.getElementById('feedbackMsg').innerText = "단어와 뜻을 입력하세요";
-    document.getElementById('feedbackMsg').style.color = "var(--text)";
-
-    const wIn = document.getElementById('inWord');
-    const mIn = document.getElementById('inMean');
-
-    wIn.value = ""; mIn.value = "";
-    wIn.className = "input-box"; mIn.className = "input-box";
-    wIn.readOnly = false;
-    mIn.placeholder = "뜻 입력";
-
-    document.getElementById('giveUpBtn').style.display = 'block';
-
-    const btn = document.getElementById('actionBtn');
-    btn.innerHTML = '확인 <span class="pc-hint">(Enter)</span>';
-    btn.disabled = false;
-    btn.onclick = handleDump;
-
-    wIn.onkeyup = (e) => { if(e.key === 'Enter') mIn.focus(); };
-    mIn.onkeyup = (e) => { if(e.key === 'Enter') handleDump(); };
-    wIn.focus();
-}
-
-// async 추가
-async function handleGiveUp() {
-    // await myConfirm 사용
-    const isConfirmed = await myConfirm("정말 2단계를 건너뛰고\n바로 오답 학습(3단계)을 하시겠습니까?\n\n(남은 단어는 모두 틀린 것으로 처리됩니다)");
-
+window.handleGiveUp = async function() {
+    const isConfirmed = await myConfirm("정말 2단계를 건너뛰고\n바로 오답 학습(3단계)을 하시겠습니까?");
     if(isConfirmed) {
         const processedIds = [...recalledWords, ...correctionQueue].map(w => w.id);
         const remaining = currentSession.filter(s => !processedIds.includes(s.id));
@@ -526,291 +235,33 @@ async function handleGiveUp() {
             updateWord(w.id, false);
             correctionQueue.push(w);
         });
-
-        myAlert(`남은 ${remaining.length}개 단어를 포함해 재학습합니다.`);
         saveSession();
         startCorrectionPhase();
     }
-}
+};
 
-async function handleDump() {
-    const wIn = document.getElementById('inWord');
-    const mIn = document.getElementById('inMean');
-    const inputWord = wIn.value.trim();
-    const inputMean = mIn.value.trim();
-
-    const handledIds = [...recalledWords, ...correctionQueue].map(w => w.id);
-    const target = currentSession.find(s => !handledIds.includes(s.id) && s.word.toLowerCase() === inputWord.toLowerCase());
-
-    if(!target) {
-        updateFeedback("목록에 없거나 이미 처리된 단어입니다.", "wrong");
-        return;
-    }
-
-    updateFeedback("AI 채점 중...", "processing");
-    document.getElementById('actionBtn').disabled = true;
-
-    const isCorrect = await checkAI(inputMean, target.mean, target.word);
-    document.getElementById('actionBtn').disabled = false;
-
-    if(isCorrect) {
-        updateFeedback(`정답! ${target.word}`, "correct");
-        recalledWords.push(target);
-        await updateWord(target.id, true);
-        setTimeout(checkPhase2End, 800);
-    } else {
-        updateFeedback(`오답입니다. (3단계 예약)`, "wrong");
-        await updateWord(target.id, false);
-        correctionQueue.push(target);
-        setTimeout(checkPhase2End, 800);
-    }
-    saveSession();
-}
-
-function checkPhase2End() {
-    const handledCount = recalledWords.length + correctionQueue.length;
-    if (handledCount >= currentSession.length) {
-        if (correctionQueue.length > 0) {
-            startCorrectionPhase();
-        } else {
-            completeSession();
-        }
-    } else {
-        resetInputUI();
-    }
-}
 
 // ============================================================
-// [Flow Logic] Phase 3: Correction
+// [Helpers & Resume Logic]
 // ============================================================
-function startCorrectionPhase() {
-    saveSession();
-
-    correctionIdx = 0;
-    retryQueue = [];
-
-    if(correctionQueue.length === 0) {
-        completeSession();
-        return;
-    }
-    processCorrectionItem();
-}
-
-function processCorrectionItem() {
-    if (correctionIdx >= correctionQueue.length) {
-        if (retryQueue.length > 0) {
-            myAlert(`아직 ${retryQueue.length}개를 못 외웠습니다. 다시!`);
-            correctionQueue = [...retryQueue];
-            startCorrectionPhase();
-        } else {
-            completeSession();
-        }
-        return;
-    }
-    correctionTarget = correctionQueue[correctionIdx];
-    showCorrectionView();
-}
-
-function showCorrectionView() {
-    curPhase = 'correction_view';
-    const currentNum = correctionIdx + 1;
-    const totalNum = correctionQueue.length;
-
-    document.getElementById('phaseTag').innerText = `3. RE-LEARN (${currentNum}/${totalNum})`;
-
-    document.getElementById('inputArea').style.display = 'none';
-    document.getElementById('wordArea').style.display = 'block';
-    document.getElementById('pBarWrap').style.display = 'block';
-    document.getElementById('giveUpBtn').style.display = 'none';
-
-    document.getElementById('mainWord').innerText = correctionTarget.word;
-    document.getElementById('mainMean').innerText = correctionTarget.mean;
-    playTTS(correctionTarget.word);
-
-    const bar = document.getElementById('pBar');
-    bar.style.transition = 'none'; bar.style.width = '0%';
-    setTimeout(() => {
-        // ★ 설정값 userSettings 사용
-        bar.style.transition = `width ${userSettings.reLearnTime}s linear`;
-        bar.style.width = '100%';
-    }, 50);
-
-    const btn = document.getElementById('actionBtn');
-    btn.innerText = "암기 완료 (테스트)";
-    btn.disabled = false;
-    btn.onclick = showCorrectionInput;
-
-    clearTimeout(window.pt);
-    window.pt = setTimeout(showCorrectionInput, userSettings.reLearnTime * 1000);
-
-    document.onkeyup = (e) => {
-        if(curPhase === 'correction_view' && (e.code === 'Space' || e.code === 'Enter')) showCorrectionInput();
-    };
-}
-
-function showCorrectionInput() {
-    clearTimeout(window.pt);
-    curPhase = 'correction_test';
-    const currentNum = correctionIdx + 1;
-    const totalNum = correctionQueue.length;
-    document.getElementById('phaseTag').innerText = `3. RE-TEST (${currentNum}/${totalNum})`;
-
-    document.getElementById('wordArea').style.display = 'none';
-    document.getElementById('pBarWrap').style.display = 'none';
-    document.getElementById('inputArea').style.display = 'block';
-
-    const wIn = document.getElementById('inWord');
-    const mIn = document.getElementById('inMean');
-
-    document.getElementById('feedbackMsg').innerText = "방금 본 뜻을 입력하세요";
-    document.getElementById('feedbackMsg').style.color = "var(--text)";
-
-    wIn.value = correctionTarget.word;
-    wIn.readOnly = true;
-    mIn.value = "";
-    mIn.className = "input-box";
-    mIn.placeholder = "뜻 입력";
-    mIn.focus();
-
-    wIn.onkeyup = null;
-    mIn.onkeyup = null;
-
-    const btn = document.getElementById('actionBtn');
-    btn.innerText = "확인";
-    btn.onclick = checkCorrectionAnswer;
-
-    document.onkeyup = (e) => {
-        if(curPhase === 'correction_test' && e.code === 'Enter') {
-            checkCorrectionAnswer();
-        }
-    };
-}
-
-async function checkCorrectionAnswer() {
-    document.onkeyup = null;
-    const btn = document.getElementById('actionBtn');
-    if(btn) btn.onclick = null;
-    if(btn) btn.disabled = true;
-
-    const input = document.getElementById('inMean').value.trim();
-
-    updateFeedback("채점 중...", "processing");
-
-    const isCorrect = await checkAI(input, correctionTarget.mean, correctionTarget.word);
-
-    if(isCorrect) {
-        updateFeedback(`정답! ${correctionTarget.word} : ${correctionTarget.mean}`, "correct");
-        setTimeout(() => {
-            correctionIdx++;
-            processCorrectionItem();
-        }, 1500);
-    } else {
-        updateFeedback(`틀렸습니다. 정답: ${correctionTarget.mean}`, "wrong");
-        retryQueue.push(correctionTarget);
-        setTimeout(() => {
-            correctionIdx++;
-            processCorrectionItem();
-        }, 2500);
-    }
-}
-
-// ============================================================
-// [Completion & Helpers]
-// ============================================================
-async function completeSession() {
-    myAlert("학습 완료! 🎉");
-    localStorage.removeItem('wow_session');
-
-    if (sessionType === 'daily') {
-        try {
-            await db.collection('users').doc(auth.currentUser.uid).collection('meta').doc('daily').update({ finished: true });
-        } catch(e) { console.log("Finish update fail", e); }
-        dailyStatus.finished = true;
-    }
-
-    loadData();
-}
-
-function updateFeedback(msg, type) {
-    const f = document.getElementById('feedbackMsg');
-    f.innerText = msg;
-    if(type === 'processing') {
-        f.style.color = 'var(--text-dim)';
-        document.getElementById('inMean').className = `input-box processing`;
-    } else {
-        f.style.color = type === 'correct' ? 'var(--accent)' : type === 'wrong' ? 'var(--error)' : 'var(--text)';
-        if(curPhase !== 'correction_test') {
-            document.getElementById('inWord').className = `input-box ${type}`;
-        }
-        document.getElementById('inMean').className = `input-box ${type}`;
-    }
-}
-
-async function checkAI(userMean, correctMean, word) {
-    if (!userMean) return false;
-    if (userMean.replace(/\s/g, '') === correctMean.replace(/\s/g, '')) return true;
-
-    try {
-        const prompt = `Is "${userMean}" a correct meaning for the English word "${word}"?
-The primary definition is "${correctMean}".
-Reply ONLY with true or false.`;
-
-        const response = await fetch(
-            `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`,
-            {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    contents: [
-                        {
-                            role: "user",
-                            parts: [{ text: prompt }]
-                        }
-                    ],
-                    generationConfig: {
-                        temperature: 0,
-                        maxOutputTokens: 5
-                    }
-                })
-            }
-        );
-
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-        const data = await response.json();
-
-        const text =
-            data.candidates?.[0]?.content?.parts
-                ?.map(p => p.text)
-                .join('')
-                .trim()
-                .toLowerCase();
-
-        if (!text) return false;
-
-        return text === 'true';
-
-    } catch (e) {
-        console.error("AI Check Error:", e);
-        return correctMean.includes(userMean) || userMean.includes(correctMean);
-    }
-}
-
 async function updateWord(id, isSuccess) {
-    const ref = db.collection('users').doc(auth.currentUser.uid).collection('words').doc(id);
-    const doc = await ref.get();
-    if(!doc.exists) return;
+    if(!auth.currentUser) return;
+    const uid = auth.currentUser.uid;
+    const wordRef = db.ref(`users/${uid}/words/${id}`);
+    const snapshot = await wordRef.once('value');
+    const data = snapshot.val();
 
-    const data = doc.data();
+    if (!data) return;
+
     let box = data.box || 0;
     let nextInterval = 0;
 
-    if(isSuccess) {
+    if (isSuccess) {
         box++;
-        if(box === 1) nextInterval = 1;
-        else if(box === 2) nextInterval = 3;
-        else if(box === 3) nextInterval = 7;
-        else if(box === 4) nextInterval = 15;
+        if (box === 1) nextInterval = 1;
+        else if (box === 2) nextInterval = 3;
+        else if (box === 3) nextInterval = 7;
+        else if (box === 4) nextInterval = 15;
         else nextInterval = 30;
     } else {
         box = 0;
@@ -819,7 +270,7 @@ async function updateWord(id, isSuccess) {
 
     const nextReview = Date.now() + (nextInterval * 24 * 60 * 60 * 1000);
 
-    await ref.update({
+    await wordRef.update({
         box: box,
         nextReview: nextReview,
         lastStudied: Date.now()
@@ -833,68 +284,229 @@ async function updateWord(id, isSuccess) {
     }
 }
 
+window.saveSession = function() {
+    const data = {
+        list: currentSession,
+        recalled: recalledWords.map(w => w.id),
+        correction: correctionQueue.map(w => w.id),
+        retry: retryQueue.map(w => w.id),
+        cIdx: correctionIdx,
+        idx: currentIdx,
+        timestamp: Date.now(),
+        type: sessionType
+    };
+    localStorage.setItem('wow_session', JSON.stringify(data));
+};
+
+window.checkResume = function() {
+    const saved = localStorage.getItem('wow_session');
+    if (!saved) return;
+
+    let data;
+    try {
+        data = JSON.parse(saved);
+    } catch(e) {
+        localStorage.removeItem('wow_session');
+        return;
+    }
+
+    // 1. 타임아웃 30분 체크
+    if (Date.now() - data.timestamp > 30 * 60 * 1000) {
+        localStorage.removeItem('wow_session');
+        return;
+    }
+
+    // 2. DB 유효성 검사 (학습하던 단어가 실제 DB에 여전히 존재하는지)
+    // allWords가 로드되기 전에 실행될 수 있으므로 방어 코드 추가
+    if (!allWords || allWords.length === 0) return;
+
+    const isValid = data.list.every(savedItem =>
+        allWords.some(realItem => realItem.id === savedItem.id)
+    );
+
+    if (!isValid) {
+        console.log("DB 데이터 불일치로 세션 삭제됨");
+        localStorage.removeItem('wow_session');
+        return;
+    }
+
+    // 3. 배너에 표시할 문구 생성
+    const total = data.list.length;
+    let descText = "";
+    const phase2Done = (data.recalled ? data.recalled.length : 0) + (data.correction ? data.correction.length : 0);
+
+    if (data.idx < total) {
+        descText = `1단계 Preview: <b>${data.idx + 1} / ${total}</b> 진행 중`;
+    } else if (phase2Done < total) {
+        descText = `2단계 Recall: <b>${phase2Done + 1} / ${total}</b> 진행 중`;
+    } else {
+        const qLen = data.correction ? data.correction.length : 0;
+        const cIdx = data.cIdx || 0;
+        descText = `3단계 Re-learn: <b>${cIdx + 1} / ${qLen}</b> 진행 중`;
+    }
+
+    // 4. 배너 HTML 렌더링 (이 부분이 오류 수정 핵심입니다)
+    const banner = document.getElementById('resumeBanner');
+    if(banner) {
+        banner.innerHTML = `
+            <div class="resume-info">
+                <h3>학습하던 기록이 있습니다</h3>
+                <p>${descText}</p>
+            </div>
+            <div class="resume-actions">
+                <button onclick="resumeFlow()" class="btn-resume-go">이어하기</button>
+                <button onclick="cancelSession()" class="btn-resume-cancel">취소</button>
+            </div>
+        `;
+        banner.style.display = 'flex';
+    }
+};
+
+window.resumeFlow = function() {
+    const saved = JSON.parse(localStorage.getItem('wow_session'));
+    if(!saved) return;
+
+    currentSession = saved.list
+        .map(savedItem => allWords.find(w => w.id === savedItem.id))
+        .filter(item => item !== undefined);
+
+    if (currentSession.length === 0) {
+        myAlert("이어할 데이터가 없습니다.");
+        localStorage.removeItem('wow_session');
+        document.getElementById('resumeBanner').style.display = 'none';
+        return;
+    }
+
+    sessionType = saved.type || 'normal';
+    recalledWords = saved.recalled.map(id => allWords.find(w => w.id === id)).filter(x=>x);
+    correctionQueue = saved.correction.map(id => allWords.find(w => w.id === id)).filter(x=>x);
+    currentIdx = saved.idx;
+    if (saved.retry) retryQueue = saved.retry.map(id => allWords.find(w => w.id === id)).filter(x=>x);
+    if (saved.cIdx !== undefined) correctionIdx = saved.cIdx;
+
+    document.getElementById('resumeBanner').style.display = 'none';
+
+    const total = currentSession.length;
+    const phase2Progress = recalledWords.length + correctionQueue.length;
+
+    if (currentIdx < total) startPreview();
+    else if (phase2Progress < total) startDump();
+    else {
+        showPage('dump');
+        document.getElementById('wordArea').style.display = 'none';
+        document.getElementById('inputArea').style.display = 'block';
+        document.getElementById('pBarWrap').style.display = 'none';
+        processCorrectionItem();
+    }
+};
+
+window.cancelSession = async function() {
+    const isConfirmed = await myConfirm("저장된 학습 기록을 삭제하시겠습니까?");
+    if(isConfirmed) {
+        localStorage.removeItem('wow_session');
+        document.getElementById('resumeBanner').style.display = 'none';
+    }
+};
+
+// ============================================================
+// [Utilities: TTS, Import/Export, Streak, Etymology]
+// ============================================================
 function playTTS(text) {
     window.speechSynthesis.cancel();
     if('speechSynthesis' in window) {
         setTimeout(() => {
             const u = new SpeechSynthesisUtterance(text);
             u.lang = 'en-US';
-            u.rate = 1.0;
             window.speechSynthesis.speak(u);
         }, 10);
     }
 }
 
-// ============================================================
-// [Data Import & Export]
-// ============================================================
-async function importWords() {
-    const setName = document.getElementById('setName').value.trim();
-    const raw = document.getElementById('rawInput').value.trim();
-
-    if(!setName || !raw) return myAlert("세트 이름과 단어를 입력하세요.");
-
-    const lines = raw.split('\n');
-    const batch = db.batch();
-    const colRef = db.collection('users').doc(auth.currentUser.uid).collection('words');
-
-    let count = 0;
-    lines.forEach(line => {
-        const parts = line.split('\t');
-        if(parts.length >= 2) {
-            const word = parts[0].trim();
-            const mean = parts[1].trim();
-            if(word && mean) {
-                const docRef = colRef.doc();
-                batch.set(docRef, {
-                    word, mean, setName,
-                    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                    box: 0,
-                    nextReview: Date.now()
-                });
-                count++;
-            }
-        }
-    });
-
-    if(count > 0) {
-        await batch.commit();
-        document.getElementById('rawInput').value = '';
-        document.getElementById('setName').value = '';
-        myAlert(`${count}개 단어 저장 완료!`);
-        loadData();
+function updateFeedback(msg, type) {
+    const f = document.getElementById('feedbackMsg');
+    f.innerText = msg;
+    if(type === 'processing') {
+        f.style.color = 'var(--text-dim)';
     } else {
-        myAlert("유효한 단어 형식이 아닙니다. (단어[탭]뜻)");
+        f.style.color = type === 'correct' ? 'var(--accent)' : type === 'wrong' ? 'var(--error)' : 'var(--text)';
+        document.getElementById('inMean').className = `input-box ${type}`;
     }
 }
 
-function renderAccordion() {
+window.myAlert = function(msg) {
+    const el = document.getElementById('customAlert');
+    if(!el) return alert(msg);
+    document.getElementById('alertMsg').innerText = msg;
+    el.classList.add('show');
+    setTimeout(() => el.classList.remove('show'), 3000);
+};
+
+window.myConfirm = function(msg) {
+    return new Promise((resolve) => {
+        const modal = document.getElementById('customConfirmModal');
+        const msgEl = document.getElementById('confirmMsg');
+        const yesBtn = document.getElementById('confirmYes');
+        const noBtn = document.getElementById('confirmNo');
+
+        msgEl.innerText = msg;
+        modal.style.display = 'flex';
+
+        const close = (result) => {
+            modal.style.display = 'none';
+            yesBtn.onclick = null;
+            noBtn.onclick = null;
+            resolve(result);
+        };
+        yesBtn.onclick = () => close(true);
+        noBtn.onclick = () => close(false);
+    });
+};
+
+function closeModal(e) {
+    if (e.target.classList.contains("modal-overlay")) {
+        e.target.style.display = "none";
+    }
+}
+
+
+window.importWords = async function() {
+    const raw = document.getElementById('rawInput').value.trim();
+    const setName = document.getElementById('setName').value.trim() || 'No Name';
+    if (!raw) return myAlert('내용을 입력하세요.');
+
+    const uid = auth.currentUser.uid;
+    const lines = raw.split('\n');
+    const updates = {};
+    const now = Date.now();
+    let count = 0;
+
+    lines.forEach(line => {
+        const [w, m] = line.split(/[\t]+/).map(s => s?.trim());
+        if (w && m) {
+            const newKey = db.ref().child('users').child(uid).child('words').push().key;
+            updates[`users/${uid}/words/${newKey}`] = {
+                word: w, mean: m, set: setName,
+                box: 0, nextReview: 0, addedAt: now
+            };
+            count++;
+        }
+    });
+
+    if (count > 0) {
+        await db.ref().update(updates);
+        myAlert(`${count}개 단어 저장 완료!`);
+        document.getElementById('rawInput').value = '';
+        loadData();
+    }
+};
+
+window.renderAccordion = function() {
     const wrap = document.getElementById('accordionWrap');
     if(!wrap) return;
     wrap.innerHTML = "";
     const sets = {};
     allWords.forEach(w => {
-        const k = w.setName || '기타';
+        const k = w.set || w.setName || '기타';
         if(!sets[k]) sets[k] = [];
         sets[k].push(w);
     });
@@ -904,8 +516,11 @@ function renderAccordion() {
         const el = document.createElement('div');
         el.innerHTML = `
             <div class="set-header" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display==='none'?'block':'none'">
-                <span>${setName} (${list.length})</span>
-                <span>▼</span>
+                <div style="display:flex; align-items:center; gap:10px; width:100%;">
+                    <span>${setName} (${list.length})</span>
+                    <button class="action-btn-small" onclick="event.stopPropagation(); shareSet('${setName}')">📤</button>
+                    <span style="margin-left:auto">▼</span>
+                </div>
             </div>
             <div style="display:none; padding:10px;">
                 ${list.map(w => `
@@ -921,181 +536,380 @@ function renderAccordion() {
         `;
         wrap.appendChild(el);
     });
-}
+};
 
-// async 추가
-async function deleteWord(id) {
-    // await myConfirm 사용
-    const isConfirmed = await myConfirm("정말 이 단어를 영구 삭제하시겠습니까?");
-
-    if(isConfirmed) {
-        await db.collection('users').doc(auth.currentUser.uid).collection('words').doc(id).delete();
+window.deleteWord = async function(id) {
+    const ok = await myConfirm("삭제하시겠습니까?");
+    if(ok) {
+        await db.ref(`users/${auth.currentUser.uid}/words/${id}`).remove();
         loadData();
     }
+};
+
+window.shareSet = async function(setName) {
+    const targetWords = allWords.filter(w => (w.set || w.setName) === setName);
+    if(targetWords.length === 0) return myAlert("단어가 없습니다.");
+
+    const ok = await myConfirm(`'${setName}' 단어장 공유?`);
+    if(!ok) return;
+
+    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+    await db.ref(`shared_books/${code}`).set({
+        title: setName,
+        author: auth.currentUser.email.split('@')[0],
+        createdAt: firebase.database.ServerValue.TIMESTAMP,
+        words: targetWords.map(w => ({ word: w.word, mean: w.mean }))
+    });
+    myAlert(`공유 코드: ${code}`);
+    navigator.clipboard.writeText(code);
+};
+
+window.downloadSharedBook = async function() {
+    const code = document.getElementById('shareCodeInput').value.trim().toUpperCase();
+    if(!code) return;
+
+    const snapshot = await db.ref(`shared_books/${code}`).once('value');
+    if(!snapshot.exists()) return myAlert("잘못된 코드입니다.");
+
+    const data = snapshot.val();
+    const ok = await myConfirm(`'${data.title}' 단어장을 다운로드할까요?`);
+    if(!ok) return;
+
+    const updates = {};
+    const uid = auth.currentUser.uid;
+    data.words.forEach(w => {
+        const key = db.ref().push().key;
+        updates[`users/${uid}/words/${key}`] = {
+            word: w.word, mean: w.mean, set: data.title,
+            box: 0, nextReview: Date.now(), addedAt: Date.now()
+        };
+    });
+    await db.ref().update(updates);
+    myAlert("다운로드 완료!");
+    loadData();
+};
+
+async function loadDailyEtymology() {
+    const todayKey = new Date().toISOString().split('T')[0];
+    const etyRef = db.ref('daily_etymology/' + todayKey);
+    try {
+        const snapshot = await etyRef.once('value');
+        if (snapshot.exists()) {
+            const data = snapshot.val();
+            renderEtymology(data.word, data.desc);
+        } else {
+            await generateWithGemini(etyRef);
+        }
+    } catch (e) { console.error(e); }
 }
 
-// [app.js] saveSession 함수 수정
-function saveSession() {
-    const data = {
-        list: currentSession,
-        recalled: recalledWords.map(w => w.id),
-        correction: correctionQueue.map(w => w.id),
-
-        // ★ [추가] 3단계용 데이터
-        retry: retryQueue.map(w => w.id),
-        cIdx: correctionIdx,
-
-        idx: currentIdx, // 1단계용
-        timestamp: Date.now(),
-        type: sessionType
-    };
-    localStorage.setItem('wow_session', JSON.stringify(data));
+function renderEtymology(word, desc) {
+    const wEl = document.getElementById('etyWord');
+    const dEl = document.getElementById('etyDesc');
+    if(wEl) wEl.innerText = word;
+    if(dEl) dEl.innerText = desc;
 }
 
-// [app.js] checkResume 함수 교체
-function checkResume() {
-    const saved = localStorage.getItem('wow_session');
-    if (!saved) return;
+// 스트릭(Streak) 관련
+// ============================================================
+// [Streak Logic - Original Working Version]
+// ============================================================
+const periodConfig = {
+    '3m': { days: 90, size: 28 },
+    '6m': { days: 180, size: 16 },
+    '1y': { days: 365, size: 8 }
+};
 
-    const data = JSON.parse(saved);
+const savedPeriod = localStorage.getItem('saved_streak_period');
+let currentPeriod = periodConfig[savedPeriod] ? savedPeriod : '1y';
 
-    // 1. 시간 초과 체크 (30분)
-    if (Date.now() - data.timestamp > 30 * 60 * 1000) {
-        localStorage.removeItem('wow_session');
-        return;
-    }
+document.documentElement.style.setProperty(
+    '--cell-size',
+    periodConfig[currentPeriod].size + 'px'
+);
 
-    // ★ [추가] 데이터 유효성 검사 (DB 초기화 대응)
-    // 저장된 학습 목록(data.list)의 모든 단어가 현재 로드된 allWords에 실제로 존재하는지 확인
-    const isValid = data.list.every(savedItem =>
-        allWords.some(realItem => realItem.id === savedItem.id)
+window.changePeriod = function (p) {
+    if (!periodConfig[p]) return;
+
+    currentPeriod = p;
+    localStorage.setItem('saved_streak_period', p);
+
+    document.querySelectorAll('.streak-btns button')
+        .forEach(b => b.classList.remove('active'));
+
+    const btn = document.getElementById(`btn-${p}`);
+    if (btn) btn.classList.add('active');
+
+    document.documentElement.style.setProperty(
+        '--cell-size',
+        periodConfig[p].size + 'px'
     );
 
-    // DB에 없는 단어가 포함되어 있다면 세션 파기
-    if (!isValid) {
-        console.log("DB 데이터 불일치로 세션 삭제됨");
-        localStorage.removeItem('wow_session');
-        return;
+    renderStreak();
+};
+
+
+function renderStreak() {
+    const grid = document.getElementById('streakGrid');
+    if (!grid) return;
+    grid.innerHTML = '';
+
+    if (!periodConfig[currentPeriod]) {
+        currentPeriod = '1y';
+        localStorage.setItem('saved_streak_period', '1y');
     }
 
-    // --- 이하 기존 로직과 동일 ---
-    const total = data.list.length;
-    let titleText = "학습하던 기록이 있습니다";
-    let descText = "";
+    const history = {};
+    allWords.forEach(w => {
+        if (!w.lastStudied) return;
+        const d = new Date(w.lastStudied);
+        const offset = d.getTimezoneOffset() * 60000;
+        const local = new Date(d.getTime() - offset)
+            .toISOString()
+            .split('T')[0];
+        history[local] = (history[local] || 0) + 1;
+    });
 
-    const phase2Done = (data.recalled ? data.recalled.length : 0) + (data.correction ? data.correction.length : 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
-    if (data.idx < total) {
-        descText = `1단계 Preview: <b>${data.idx + 1} / ${total}</b> 진행 중`;
-    } else if (phase2Done < total) {
-        descText = `2단계 Recall: <b>${phase2Done + 1} / ${total}</b> 진행 중`;
-    } else {
-        const qLen = data.correction ? data.correction.length : 0;
-        const cIdx = data.cIdx || 0;
-        descText = `3단계 Re-learn: <b>${cIdx + 1} / ${qLen}</b> 번째 학습 중`;
-    }
+    const totalDays = periodConfig[currentPeriod].days;
 
-    const banner = document.getElementById('resumeBanner');
-    banner.innerHTML = `
-        <div class="resume-info">
-            <h3>${titleText}</h3>
-            <p>${descText}</p>
-        </div>
-        <div class="resume-actions">
-            <button onclick="resumeFlow()" class="btn-resume-go">이어하기</button>
-            <button onclick="cancelSession()" class="btn-resume-cancel">취소</button>
-        </div>
-    `;
-    banner.style.display = 'flex';
-}
+    const start = new Date(today);
+    start.setDate(start.getDate() - totalDays + 1);
 
-// [app.js] resumeFlow 함수 교체
-function resumeFlow() {
-    const saved = JSON.parse(localStorage.getItem('wow_session'));
-    if(!saved) return;
+    const dayOfWeek = start.getDay(); // 0=일 ~ 6=토
+    start.setDate(start.getDate() - dayOfWeek);
 
-    // ★ [수정] currentSession 복구 시 allWords와 매핑하여 죽은 객체 필터링
-    // 저장된 리스트의 ID를 기반으로 실제 존재하는(allWords) 객체만 가져옴
-    currentSession = saved.list
-        .map(savedItem => allWords.find(w => w.id === savedItem.id))
-        .filter(item => item !== undefined);
+    for (let d = new Date(start); d <= today; d.setDate(d.getDate() + 1)) {
+        const offset = d.getTimezoneOffset() * 60000;
+        const dateStr = new Date(d.getTime() - offset)
+            .toISOString()
+            .split('T')[0];
 
-    // 만약 복구했더니 단어가 하나도 없다면? (DB 전체 삭제 상황)
-    if (currentSession.length === 0) {
-        myAlert("원본 데이터가 삭제되어 이어할 수 없습니다.");
-        localStorage.removeItem('wow_session');
-        document.getElementById('resumeBanner').style.display = 'none';
-        return;
-    }
+        const count = history[dateStr] || 0;
 
-    sessionType = saved.type || 'normal';
+        const el = document.createElement('div');
+        el.className = 'day';
 
-    // 나머지 큐 복구 (마찬가지로 실존 여부 확인)
-    recalledWords = saved.recalled.map(id => allWords.find(w => w.id === id)).filter(x=>x);
-    correctionQueue = saved.correction.map(id => allWords.find(w => w.id === id)).filter(x=>x);
+        if (count === 0) el.style.background = 'var(--gh-empty)';
+        else if (count <= 5) el.style.background = 'var(--gh-l1)';
+        else if (count <= 10) el.style.background = 'var(--gh-l2)';
+        else if (count <= 20) el.style.background = 'var(--gh-l3)';
+        else el.style.background = 'var(--gh-l4)';
 
-    currentIdx = saved.idx;
-
-    if (saved.retry) {
-        retryQueue = saved.retry.map(id => allWords.find(w => w.id === id)).filter(x=>x);
-    }
-    if (saved.cIdx !== undefined) {
-        correctionIdx = saved.cIdx;
-    }
-
-    document.getElementById('resumeBanner').style.display = 'none';
-
-    const total = currentSession.length;
-    const phase2Progress = recalledWords.length + correctionQueue.length;
-
-    // --- 분기 처리 ---
-    if (currentIdx < total) {
-        startPreview();
-    }
-    else if (phase2Progress < total) {
-        startDump();
-    }
-    else {
-        showPage('dump');
-        document.getElementById('phaseTag').innerText = "3. RE-LEARN (재학습)";
-        document.getElementById('wordArea').style.display = 'none';
-        document.getElementById('inputArea').style.display = 'block';
-        document.getElementById('pBarWrap').style.display = 'none';
-        resetInputUI();
-        processCorrectionItem();
-    }
-}
-// 취소 함수 (기존과 동일)
-// async 추가
-async function cancelSession() {
-    // await myConfirm 사용
-    const isConfirmed = await myConfirm("저장된 학습 기록을 삭제하고\n홈으로 돌아가시겠습니까?");
-
-    if(isConfirmed) {
-        localStorage.removeItem('wow_session');
-        document.getElementById('resumeBanner').style.display = 'none';
-    }
-}
-// [Helper] 커스텀 Confirm 함수 (Promise 기반)
-function myConfirm(msg) {
-    return new Promise((resolve) => {
-        const modal = document.getElementById('customConfirmModal');
-        const msgEl = document.getElementById('confirmMsg');
-        const yesBtn = document.getElementById('confirmYes');
-        const noBtn = document.getElementById('confirmNo');
-
-        msgEl.innerText = msg;
-        modal.style.display = 'flex';
-
-        // 버튼 클릭 시 이벤트 처리 (일회성)
-        const close = (result) => {
-            modal.style.display = 'none';
-            yesBtn.onclick = null;
-            noBtn.onclick = null;
-            resolve(result);
+        el.onmousemove = e => {
+            const t = document.getElementById('streakTooltip');
+            t.innerHTML = `<b>${dateStr}</b><br>${count} words`;
+            t.style.left = e.clientX + 12 + 'px';
+            t.style.top = e.clientY + 12 + 'px';
+            t.style.opacity = '1';
         };
 
-        yesBtn.onclick = () => close(true);
-        noBtn.onclick = () => close(false);
+        el.onmouseleave = () =>
+            (document.getElementById('streakTooltip').style.opacity = '0');
+
+        el.onclick = () => openStreakModal(dateStr);
+
+        grid.appendChild(el);
+    }
+
+    const scroll = document.querySelector('.streak-scroll-view');
+    if (scroll) scroll.scrollLeft = scroll.scrollWidth;
+}
+
+// 초기 스트릭 상태 복원
+(function initStreakPeriod() {
+    const btn = document.getElementById(`btn-${currentPeriod}`);
+    if (btn) btn.classList.add('active');
+
+    document.documentElement.style.setProperty(
+        '--cell-size',
+        periodConfig[currentPeriod].size + 'px'
+    );
+
+    renderStreak();
+})();
+
+function showStreakTooltip(el, date, count) {
+    const tip = document.getElementById('streakTooltip');
+    if (!tip) return;
+
+    tip.innerHTML = `
+        <strong>${date}</strong><br>
+        ${count}개 학습
+    `;
+
+    tip.classList.add('show');
+
+    el._moveHandler = (e) => {
+        tip.style.left = (e.clientX + 12) + 'px';
+        tip.style.top  = (e.clientY - 28) + 'px';
+    };
+
+    document.addEventListener('mousemove', el._moveHandler);
+}
+document.addEventListener("DOMContentLoaded", () => {
+    const saved = localStorage.getItem('saved_streak_period');
+    changePeriod(periodConfig[saved] ? saved : '1y');
+});
+
+
+function hideStreakTooltip() {
+    const tip = document.getElementById('streakTooltip');
+    if (tip) tip.classList.remove('show');
+
+    document.removeEventListener('mousemove', this?._moveHandler);
+}
+
+window.openStreakModal = function (dateStr) {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+
+    const box = document.createElement('div');
+    box.className = 'modal-box';
+
+    const header = document.createElement('div');
+    header.className = 'streak-modal-header';
+
+    const title = document.createElement('h3');
+    title.textContent = dateStr;
+
+    const close = document.createElement('button');
+    close.className = 'streak-modal-close';
+    close.textContent = '×';
+    close.onclick = () => overlay.remove();
+
+    header.appendChild(title);
+    header.appendChild(close);
+
+    const list = document.createElement('div');
+    list.className = 'streak-word-list';
+
+    const words = allWords.filter(w => {
+        if (!w.lastStudied) return false;
+        const d = new Date(w.lastStudied);
+        const offset = d.getTimezoneOffset() * 60000;
+        const local = new Date(d.getTime() - offset)
+            .toISOString()
+            .split('T')[0];
+        return local === dateStr;
     });
+
+    if (words.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'streak-word-empty';
+        empty.textContent = '이 날 학습한 단어가 없습니다';
+        list.appendChild(empty);
+    } else {
+        words.forEach(w => {
+            const item = document.createElement('div');
+            item.className = 'streak-word-item';
+
+            const term = document.createElement('div');
+            term.className = 'streak-word-term';
+            term.textContent = w.word || w.term || '';
+
+            const meaning = document.createElement('div');
+            meaning.className = 'streak-word-meaning';
+            meaning.textContent = w.mean || w.definition || '';
+
+            item.appendChild(term);
+            item.appendChild(meaning);
+            list.appendChild(item);
+        });
+    }
+
+    box.appendChild(header);
+    box.appendChild(list);
+    overlay.appendChild(box);
+
+    overlay.onclick = e => {
+        if (e.target === overlay) overlay.remove();
+    };
+
+    document.body.appendChild(overlay);
+};
+
+function endCurrentSession() {
+    if(currentSession && currentSession.length > 0) {
+        saveSession(); // 기존 학습 저장
+        currentSession = []; // 세션 초기화
+        showPage('main'); // 필요한 경우 메인 화면으로
+    }
+}
+
+// HTML 버튼과 연결되는 함수들
+window.startDailySession = function() {
+    endCurrentSession(); // 기존 세션 종료
+    if (dailyStatus.finished) {
+        if(allWords.length === 0) return myAlert("단어가 없습니다.");
+        const randomList = allWords.slice().sort(() => 0.5 - Math.random()).slice(0, userSettings.dailyGoal);
+        startFlow(randomList, 'normal');
+    } else {
+        const unstudiedWords = allWords.filter(w => !w.lastStudied);
+        if (unstudiedWords.length === 0) return myAlert("신규 학습할 단어가 없습니다! (단어 추가 필요)");
+        const sessionList = unstudiedWords.slice(0, userSettings.dailyGoal);
+        startFlow(sessionList, 'daily');
+    }
+};
+
+window.startReviewSession = function() {
+    endCurrentSession(); // 기존 세션 종료
+
+    const now = Date.now();
+    const reviewList = allWords.filter(w => w.nextReview && w.nextReview <= now);
+    if(reviewList.length === 0) return myAlert("복습할 단어가 없습니다.");
+
+    reviewList.sort((a,b) => a.nextReview - b.nextReview);
+
+    // UI 초기화
+    document.getElementById('phaseTag').innerText = "1. PRESENT (학습)";
+    document.getElementById('wordArea').style.display = 'block';
+    document.getElementById('inputArea').style.display = 'none';
+    document.getElementById('pBarWrap').style.display = 'block';
+    resetInputUI();
+
+    startFlow(reviewList.slice(0, userSettings.dailyGoal), 'review'); // 항상 1단계부터 시작
+};
+
+
+function createDayCell(dateStr, words) {
+    const day = document.createElement("div");
+    day.className = "day";
+
+    const date = new Date(dateStr);
+    const dow = date.getDay(); // 0(일) ~ 6(토)
+
+    const count = words ? words.length : 0;
+
+    day.dataset.date = dateStr;
+    day.dataset.count = count;
+    day.dataset.words = JSON.stringify(words || []);
+
+    // ★ 핵심: 요일을 행으로 고정
+    day.style.gridRow = dow + 1;
+
+    day.addEventListener("click", () => {
+        openStreakDetail(day);
+    });
+
+    return day;
+}
+
+document.addEventListener("touchstart", () => {}, { passive: true });
+function toggleApiKey() {
+    const input = document.getElementById('settingsApiKey');
+    const openEye = document.querySelector('.toggle-visibility .eye.open');
+    const closedEye = document.querySelector('.toggle-visibility .eye.closed');
+
+    if(input.type === 'password') {
+        input.type = 'text';
+        openEye.style.display = 'none';
+        closedEye.style.display = 'block';
+    } else {
+        input.type = 'password';
+        openEye.style.display = 'block';
+        closedEye.style.display = 'none';
+    }
 }
