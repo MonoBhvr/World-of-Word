@@ -65,6 +65,26 @@ function myAlert(msg) {
 function toggleSettings() {
     document.getElementById('settingsOverlay').classList.toggle('open');
 }
+// [Settings Logic] DB에서 설정 불러오기
+async function loadSettings() {
+    if (!auth.currentUser) return;
+
+    const docRef = db.collection('users').doc(auth.currentUser.uid).collection('meta').doc('settings');
+    const doc = await docRef.get();
+
+    if (doc.exists) {
+        // DB에 저장된 설정이 있으면 덮어쓰기
+        const data = doc.data();
+        // 기존 키값 유지하면서 병합 (새로운 설정 항목이 생길 경우 대비)
+        userSettings = { ...userSettings, ...data };
+    } else {
+        // DB에 설정 문서가 없으면 기본값으로 생성
+        await docRef.set(userSettings);
+    }
+
+    // UI에 반영
+    updateSettingsUI();
+}
 
 function updateSettingUI() {
     // 시간 설정 UI 반영
@@ -78,24 +98,42 @@ function updateSettingUI() {
         document.getElementById('dailyGoalVal').innerText = userSettings.dailyGoal;
 }
 
-function adjSetting(key, delta) {
-    if (key === 'dailyGoal') {
-        // 정수형 변경 (하루 학습량)
-        userSettings.dailyGoal += delta;
-        if (userSettings.dailyGoal < 5) userSettings.dailyGoal = 5;
-        if (userSettings.dailyGoal > 100) userSettings.dailyGoal = 100;
-    } else {
-        // 소수점 변경 (시간 설정)
-        userSettings[key] += delta;
-        if (userSettings[key] < 0.5) userSettings[key] = 0.5;
+// [Settings Logic] 설정값 변경 및 DB 저장
+async function adjSetting(key, val) {
+    let current = userSettings[key];
+    let newVal = current + val;
+
+    // --- 값 제한 로직 ---
+    if (key === 'previewTime') {
+        if (newVal < 0.5) newVal = 0.5;
+        if (newVal > 5.0) newVal = 5.0;
+    }
+    else if (key === 'reLearnTime') {
+        if (newVal < 1.0) newVal = 0.5;
+        if (newVal > 10.0) newVal = 10.0;
+    }
+    else if (key === 'dailyGoal') {
+        if (newVal < 5) newVal = 5;
+        if (newVal > 100) newVal = 100;
     }
 
-    // 변경사항 저장 및 UI 업데이트
-    localStorage.setItem('wow_settings', JSON.stringify(userSettings));
-    updateSettingUI();
+    // 소수점 오차 보정 (부동소수점 문제 방지)
+    if (key !== 'dailyGoal') {
+        newVal = Math.round(newVal * 10) / 10;
+    }
 
-    // 대시보드 숫자가 바뀔 수 있으므로 갱신
-    if(key === 'dailyGoal') renderDashboard();
+    // 전역 변수 업데이트
+    userSettings[key] = newVal;
+
+    // UI 즉시 업데이트
+    updateSettingsUI();
+
+    // ★ DB 비동기 저장 (사용자 경험을 위해 await 없이 백그라운드 저장)
+    if (auth.currentUser) {
+        db.collection('users').doc(auth.currentUser.uid).collection('meta').doc('settings')
+            .set(userSettings, { merge: true })
+            .catch(err => console.error("설정 저장 실패:", err));
+    }
 }
 
 // ============================================================
@@ -115,7 +153,7 @@ async function loadData() {
         } else {
             dailyStatus = { finished: false, date: todayStr, wordIds: [] };
         }
-
+        await loadSettings();
         renderDashboard();
         renderStreak();
         renderAccordion();
