@@ -269,6 +269,7 @@ async function completeSession() {
     if(sessionType === 'daily' && auth.currentUser) {
         await db.ref(`users/${auth.currentUser.uid}/daily`).update({ finished: true });
         dailyStatus.finished = true;
+        dailyStatus.date = new Date().toLocaleDateString();
     }
     loadData();
     showPage('page-home');

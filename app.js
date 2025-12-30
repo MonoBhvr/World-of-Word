@@ -32,7 +32,7 @@ let currentIdx = 0;         // 1단계 진행 인덱스
 let correctionIdx = 0;      // 3단계 진행 인덱스
 let curPhase = 'home';      // 현재 화면 상태
 let sessionType = 'normal'; // 'daily', 'review', 'normal'
-let dailyStatus = { finished: false };
+let dailyStatus = { finished: false , date : "" }; // 오늘 학습 완료 여부
 let correctionTarget = null;
 let pt = null;              // 타이머 핸들
 
@@ -146,6 +146,10 @@ function renderDashboard() {
     }
     if(document.getElementById('userNameDisp') && auth.currentUser) {
         document.getElementById('userNameDisp').innerText = auth.currentUser.email.split('@')[0];
+    }
+
+    if(dailyStatus.date !== new Date().toLocaleDateString()){
+        dailyStatus.finished = false;
     }
 
     const countToday = dailyStatus.finished ? "완료" : Math.min(unstudiedWords.length, userSettings.dailyGoal);
@@ -842,7 +846,7 @@ function endCurrentSession() {
 // HTML 버튼과 연결되는 함수들
 window.startDailySession = function() {
     endCurrentSession(); // 기존 세션 종료
-    if (dailyStatus.finished) {
+    if (dailyStatus.finished && dailyStatus.date === new Date().toLocaleDateString()) {
         if(allWords.length === 0) return myAlert("단어가 없습니다.");
         const randomList = allWords.slice().sort(() => 0.5 - Math.random()).slice(0, userSettings.dailyGoal);
         startFlow(randomList, 'normal');
