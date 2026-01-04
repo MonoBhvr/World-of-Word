@@ -1,19 +1,7 @@
 const firebaseConfig = { apiKey: "AIzaSyB4YI3_w6bXIcxXB7gC7Xnzo9biEKVGSqM", authDomain: "ciaword-a7c51.firebaseapp.com", projectId: "ciaword-a7c51", storageBucket: "ciaword-a7c51.firebasestorage.app", messagingSenderId: "566446687672", appId: "1:566446687672:web:ea63701602a00ac28a7b4d" };
-
 window.addEventListener('load', () => {
-    const savedKey = localStorage.getItem('userApiKey');
-    if(savedKey) {
-        window.GEMINI_KEY = savedKey;
-        document.getElementById('apiKeyPrompt').style.display = 'none';
-        if(document.getElementById('settingsApiKey')) {
-            document.getElementById('settingsApiKey').value = savedKey;
-        }
-    } else {
-        document.getElementById('apiKeyPrompt').style.display = 'flex';
-    }
+    apikeyget();
 });
-
-
 
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
@@ -58,6 +46,21 @@ auth.onAuthStateChanged((user) => {
     }
 });
 
+window.apikeyget = function() {
+    if(auth.currentuser ) {
+        const savedKey = localStorage.getItem('userApiKey');
+        if (savedKey) {
+            window.GEMINI_KEY = savedKey;
+            document.getElementById('apiKeyPrompt').style.display = 'none';
+            if (document.getElementById('settingsApiKey')) {
+                document.getElementById('settingsApiKey').value = savedKey;
+            }
+        } else {
+            document.getElementById('apiKeyPrompt').style.display = 'flex';
+        }
+    }
+}
+
 window.login = function() {
     const provider = new firebase.auth.GoogleAuthProvider();
     auth.signInWithPopup(provider).catch(e => myAlert("로그인 실패: " + e.message));
@@ -70,6 +73,7 @@ window.logout = function() {
 
 async function loadData() {
     if (!auth.currentUser) return;
+    apikeyget();
     const uid = auth.currentUser.uid;
 
     // 1. 전체 데이터 한 번에 로드 (RTDB)

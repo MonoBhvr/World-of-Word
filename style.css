@@ -722,6 +722,30 @@ body { background-color: var(--bg); color: var(--text); overflow-x: hidden; }
 .popup {
     background:white; padding:20px; border-radius:10px; text-align:center;
 }
+#popupApiKey {
+    width: 100%;
+    height: 44px;
+    padding: 0 12px;
+    margin : 16px 0;
+    border-radius: 8px;
+    border: 1px solid #2a2a2a;
+    background: #1c1c1c;
+    color: #fff;
+    font-size: 14px;
+    outline: none;
+    box-sizing: border-box;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+#popupApiKey::placeholder {
+    color: #8b8b8b;
+}
+
+#popupApiKey:focus {
+    border-color: #4c7dff;
+    box-shadow: 0 0 0 2px rgba(76,125,255,0.25);
+}
+
 /* 플로팅 오버레이 */
 #apiKeyPrompt {
     display: none;
