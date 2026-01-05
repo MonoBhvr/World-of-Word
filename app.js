@@ -7,7 +7,6 @@ firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.database();
 
-
 // ============================================================
 // [Global Variables]
 // ============================================================
@@ -88,8 +87,21 @@ async function loadData() {
     }));
 
     // 3. 설정 및 데일리 상태 로드
-    if (data.settings) userSettings = { ...userSettings, ...data.settings };
-    dailyStatus = data.daily || {};
+        if (data.settings) userSettings = { ...userSettings, ...data.settings };
+        dailyStatus = data.daily || { finished: false, date: "" };
+
+        // ===== [추가: 데일리 상태 날짜 검증] =====
+        const todayStr = new Date().toLocaleDateString();
+
+        if (dailyStatus.date !== todayStr) {
+            dailyStatus = {
+                finished: false,
+                date: todayStr
+            };
+
+            await db.ref(`users/${uid}/daily`).set(dailyStatus);
+        }
+
 
     // 4. UI 업데이트
     updateSettingUI();
@@ -153,7 +165,12 @@ function renderDashboard() {
     }
 
     if(dailyStatus.date !== new Date().toLocaleDateString()){
-        dailyStatus.finished = false;
+        dailyStatus = {
+            finished: false,
+            date: todayStr
+        };
+
+        db.ref(`users/${uid}/daily`).set(dailyStatus);
     }
 
     const countToday = dailyStatus.finished ? "완료" : Math.min(unstudiedWords.length, userSettings.dailyGoal);
