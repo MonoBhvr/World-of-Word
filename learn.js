@@ -162,11 +162,10 @@ function startCorrectionPhase() {
     const mIn = document.getElementById('inMean');
     wIn.onkeyup = null;
     mIn.onkeyup = null;
-
-    document.getElementById('giveUpBtn').style.display = 'none';
-
+    
     saveSession();
     resetInputUI();
+    document.getElementById('giveUpBtn').style.display = 'none';
     correctionIdx = 0;
     if(correctionQueue.length === 0) {
         completeSession();
