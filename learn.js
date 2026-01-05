@@ -91,7 +91,8 @@ window.startDump = function() {
 
 function resetInputUI() {
     const fMsg = document.getElementById('feedbackMsg');
-    fMsg.innerText = "단어와 뜻을 입력하세요";
+    // 2단계라면, "단어와 뜻을 입력하세요" 메시지 뒤에 현재 맞춘 단어 수 표시, 예시) 15개중 7개 맞춤 -> "단어와 뜻을 입력하세요 (7/15)"
+    fMsg.innerText = "단어와 뜻을 입력하세요" + (curPhase === 'dump' ? ` (${recalledWords.length}/${recalledWords.length + currentSession.length})` : "");
     fMsg.style.color = "var(--text)";
 
     const wIn = document.getElementById('inWord');
@@ -124,6 +125,7 @@ async function handleDump() {
 
     if(targetIndex === -1) {
         updateFeedback("없는 단어입니다.", "wrong");
+        setTimeout(() => resetInputUI(), 600);
         return;
     }
 
@@ -162,7 +164,7 @@ function startCorrectionPhase() {
     const mIn = document.getElementById('inMean');
     wIn.onkeyup = null;
     mIn.onkeyup = null;
-    
+
     saveSession();
     resetInputUI();
     document.getElementById('giveUpBtn').style.display = 'none';
