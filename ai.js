@@ -95,7 +95,7 @@ window.checkAI = async function (userMean, correctMean, word) {
             temperature: 0,
             max_tokens: 5
         });
-
+        console.log(res.choices[0].message.content.trim().toLowerCase());
         return res.choices[0].message.content.trim().toLowerCase() === "true";
     } catch {
         return correctMean.includes(userMean) || userMean.includes(correctMean);
