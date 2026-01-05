@@ -156,6 +156,15 @@ async function handleDump() {
 // [3. Correction Phase]
 // ============================================================
 function startCorrectionPhase() {
+    document.onkeyup = null;
+
+    const wIn = document.getElementById('inWord');
+    const mIn = document.getElementById('inMean');
+    wIn.onkeyup = null;
+    mIn.onkeyup = null;
+
+    document.getElementById('giveUpBtn').style.display = 'none';
+
     saveSession();
     correctionIdx = 0;
     if(correctionQueue.length === 0) {
@@ -217,6 +226,15 @@ function showCorrectionView() {
 
 function showCorrectionInput() {
     clearTimeout(pt);
+
+    // 🔴 이전 단계 입력 이벤트 완전 제거
+    const wIn = document.getElementById('inWord');
+    const mIn = document.getElementById('inMean');
+    wIn.onkeyup = null;
+    mIn.onkeyup = null;
+
+    document.onkeyup = null;
+
     curPhase = 'correction_test';
     document.getElementById('phaseTag').innerText = `3. RE-TEST (${correctionIdx + 1}/${correctionQueue.length})`;
 
@@ -224,8 +242,6 @@ function showCorrectionInput() {
     document.getElementById('pBarWrap').style.display = 'none';
     document.getElementById('inputArea').style.display = 'block';
 
-    const wIn = document.getElementById('inWord');
-    const mIn = document.getElementById('inMean');
     wIn.value = correctionTarget.word;
     wIn.readOnly = true;
     mIn.value = "";
@@ -251,9 +267,14 @@ async function checkCorrectionAnswer() {
 
     if(isCorrect) {
         updateFeedback(`정답! ${correctionTarget.word} : ${correctionTarget.mean}`, "correct");
+        saveSession();
+        setTimeout(() => resetInputUI(), 1200);
+
     } else {
         updateFeedback(`틀렸습니다. 정답: ${correctionTarget.mean}`, "wrong");
         retryQueue.push(correctionTarget);
+        saveSession();
+        setTimeout(() => resetInputUI(), 2000);
     }
 
     correctionIdx++;
