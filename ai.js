@@ -89,7 +89,7 @@ window.checkAI = async function (userMean, correctMean, word) {
             messages: [
                 {
                     role: "user",
-                    content: `Is "${userMean}" a correct meaning for "${word}"? Definition: "${correctMean}". Reply only true or false.`
+                    content: `Is "${userMean}" a correct meaning for "${word}"? Definition: "${correctMean}". Reply only true or false. no explanations no commas, no punctuation. only 'true' or 'false'.`
                 }
             ],
             temperature: 0,
