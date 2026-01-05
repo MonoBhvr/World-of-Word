@@ -92,7 +92,7 @@ window.startDump = function() {
 function resetInputUI() {
     const fMsg = document.getElementById('feedbackMsg');
     // 2단계라면, "단어와 뜻을 입력하세요" 메시지 뒤에 현재 맞춘 단어 수 표시, 예시) 15개중 7개 맞춤 -> "단어와 뜻을 입력하세요 (7/15)"
-    fMsg.innerText = "단어와 뜻을 입력하세요" + (curPhase === 'dump' ? ` (${recalledWords.length}/${recalledWords.length + currentSession.length})` : "");
+    fMsg.innerText = "단어와 뜻을 입력하세요" + (curPhase === 'dump' ? ` (${recalledWords.length}/${recalledWords.length + currentSession.length + correctionQueue.length}, ${correctionQueue.length}개 오답)` : "");
     fMsg.style.color = "var(--text)";
 
     const wIn = document.getElementById('inWord');
