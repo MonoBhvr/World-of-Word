@@ -1,6 +1,6 @@
 {
-  "name": "Word Learning App",
-  "short_name": "WordApp",
+  "name": "World of Word",
+  "short_name": "WoW",
   "start_url": "/index.html",
   "display": "standalone",
   "background_color": "#0f172a",
