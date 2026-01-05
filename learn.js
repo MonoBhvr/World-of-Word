@@ -166,6 +166,7 @@ function startCorrectionPhase() {
     document.getElementById('giveUpBtn').style.display = 'none';
 
     saveSession();
+    resetInputUI();
     correctionIdx = 0;
     if(correctionQueue.length === 0) {
         completeSession();
