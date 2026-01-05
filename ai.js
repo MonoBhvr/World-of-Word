@@ -14,6 +14,7 @@ function initAI(key) {
         }
     });
     window.GEMINI_KEY = key;
+
 }
 
 /* 공통: API 키 Ping 테스트 */
